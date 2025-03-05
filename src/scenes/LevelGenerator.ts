@@ -3,7 +3,6 @@ interface Room {
     y: number;
     width: number;
     height: number;
-    depth: number; // BSP tree depth
 }
 
 interface BSPNode {
@@ -11,19 +10,30 @@ interface BSPNode {
     y: number;
     width: number;
     height: number;
-    room?: Room;
     left?: BSPNode;
     right?: BSPNode;
-    depth: number;
 }
 
-interface LevelConfig {
-    gridSize?: number;
-    minRoomSize?: number;
-    maxRoomSize?: number;
-    maxSplits?: number;
-    roomPadding?: number;
-    splitRandomness?: number; // 0-1, how random the split position is
+interface LevelGeneratorConfig {
+    gridSize: number;
+    minRoomSize: number;
+    maxRoomSize: number;
+    maxSplits: number;
+    roomPadding: number;
+    splitRandomness: number;
+}
+
+interface Point {
+    x: number;
+    y: number;
+}
+
+interface AStarNode {
+    point: Point;
+    g: number;  // Cost from start to current node
+    h: number;  // Estimated cost from current node to end
+    f: number;  // Total cost (g + h)
+    parent?: AStarNode;
 }
 
 export interface LevelData {
@@ -32,284 +42,323 @@ export interface LevelData {
     entranceY: number;
     exitX: number;
     exitY: number;
+    rooms: Room[];
 }
 
 export class LevelGenerator {
-    private readonly GRID_SIZE: number;
-    private readonly MIN_ROOM_SIZE: number;
-    private readonly MAX_ROOM_SIZE: number;
-    private readonly MAX_SPLITS: number;
-    private readonly ROOM_PADDING: number;
-    private readonly SPLIT_RANDOMNESS: number;
-    private grid: boolean[][] = [];
+    private grid: boolean[][];
     private rooms: Room[] = [];
-    private entrance?: Room;
-    private exit?: Room;
+    private config: LevelGeneratorConfig;
 
-    constructor(config: LevelConfig = {}) {
-        this.GRID_SIZE = config.gridSize || 50;
-        this.MIN_ROOM_SIZE = config.minRoomSize || 5;
-        this.MAX_ROOM_SIZE = config.maxRoomSize || 15;
-        this.MAX_SPLITS = config.maxSplits || 4;
-        this.ROOM_PADDING = config.roomPadding || 1;
-        this.SPLIT_RANDOMNESS = config.splitRandomness || 0.5;
+    constructor(config: LevelGeneratorConfig) {
+        this.config = config;
+        this.grid = Array(config.gridSize).fill(false).map(() => Array(config.gridSize).fill(true));
     }
 
     generateLevel(): LevelData {
         // Reset state
         this.rooms = [];
-        this.entrance = undefined;
-        this.exit = undefined;
+        this.grid = Array(this.config.gridSize).fill(false).map(() => Array(this.config.gridSize).fill(true));
 
-        // Fill the grid with walls
-        this.grid = Array(this.GRID_SIZE).fill(null).map(() => 
-            Array(this.GRID_SIZE).fill(true)
-        );
-
-        // Generate rooms using BSP
-        const rootNode: BSPNode = {
-            x: 1,
-            y: 1,
-            width: this.GRID_SIZE - 2,
-            height: this.GRID_SIZE - 2,
-            depth: 0
+        // Create root node
+        const root: BSPNode = {
+            x: 0,
+            y: 0,
+            width: this.config.gridSize,
+            height: this.config.gridSize
         };
 
-        this.splitNode(rootNode);
-        this.createRooms(rootNode);
-        this.connectRooms(rootNode);
-        this.placeEntranceAndExit();
-        this.carveRooms();
+        // Split space into rooms
+        this.splitNode(root, 0);
 
-        const entrancePos = this.getEntrancePosition();
-        const exitPos = this.getExitPosition();
-        
+        // Place entrance and exit
+        const { entranceX, entranceY, exitX, exitY } = this.placeEntranceAndExit();
+
         return {
             grid: this.grid,
-            entranceX: entrancePos.x,
-            entranceY: entrancePos.y,
-            exitX: exitPos.x,
-            exitY: exitPos.y
+            entranceX,
+            entranceY,
+            exitX,
+            exitY,
+            rooms: this.rooms
         };
     }
 
-    private getEntrancePosition(): { x: number, y: number } {
-        if (!this.entrance) {
-            return { x: this.GRID_SIZE / 2, y: this.GRID_SIZE / 2 };
-        }
-        return {
-            x: this.entrance.x + Math.floor(this.entrance.width / 2),
-            y: this.entrance.y + Math.floor(this.entrance.height / 2)
-        };
-    }
-
-    private getExitPosition(): { x: number, y: number } {
-        if (!this.exit) {
-            return { x: this.GRID_SIZE / 2, y: this.GRID_SIZE / 2 };
-        }
-        return {
-            x: this.exit.x + Math.floor(this.exit.width / 2),
-            y: this.exit.y + Math.floor(this.exit.height / 2)
-        };
-    }
-
-    private connectRooms(node: BSPNode): void {
-        if (node.left && node.right) {
-            // Get rooms from left and right nodes
-            const leftRooms = this.getAllRooms(node.left);
-            const rightRooms = this.getAllRooms(node.right);
-
-            if (leftRooms.length > 0 && rightRooms.length > 0) {
-                // Choose random rooms from each side
-                const leftRoom = leftRooms[Math.floor(Math.random() * leftRooms.length)];
-                const rightRoom = rightRooms[Math.floor(Math.random() * rightRooms.length)];
-
-                // Create corridor between rooms
-                this.createCorridor(leftRoom, rightRoom);
-            }
-
-            // Continue connecting rooms in children
-            this.connectRooms(node.left);
-            this.connectRooms(node.right);
-        }
-    }
-
-    private getAllRooms(node: BSPNode): Room[] {
-        const rooms: Room[] = [];
-        if (node.room) {
-            rooms.push(node.room);
-        }
-        if (node.left) {
-            rooms.push(...this.getAllRooms(node.left));
-        }
-        if (node.right) {
-            rooms.push(...this.getAllRooms(node.right));
-        }
-        return rooms;
-    }
-
-    private createCorridor(roomA: Room, roomB: Room): void {
-        // Get centers of rooms
-        const ax = roomA.x + Math.floor(roomA.width / 2);
-        const ay = roomA.y + Math.floor(roomA.height / 2);
-        const bx = roomB.x + Math.floor(roomB.width / 2);
-        const by = roomB.y + Math.floor(roomB.height / 2);
-
-        // Randomly choose whether to go horizontal or vertical first
-        if (Math.random() < 0.5) {
-            this.createHorizontalCorridor(ax, bx, ay);
-            this.createVerticalCorridor(ay, by, bx);
-        } else {
-            this.createVerticalCorridor(ay, by, ax);
-            this.createHorizontalCorridor(ax, bx, by);
-        }
-    }
-
-    private createHorizontalCorridor(x1: number, x2: number, y: number): void {
-        const start = Math.min(x1, x2);
-        const end = Math.max(x1, x2);
-        for (let x = start; x <= end; x++) {
-            this.grid[y][x] = false;
-        }
-    }
-
-    private createVerticalCorridor(y1: number, y2: number, x: number): void {
-        const start = Math.min(y1, y2);
-        const end = Math.max(y1, y2);
-        for (let y = start; y <= end; y++) {
-            this.grid[y][x] = false;
-        }
-    }
-
-    private splitNode(node: BSPNode): void {
-        if (node.depth >= this.MAX_SPLITS) return;
-
-        const minSize = this.MIN_ROOM_SIZE + this.ROOM_PADDING * 2;
-        const isVertical = Math.random() < 0.5;
-
-        if (isVertical && node.width > minSize * 2) {
-            // Vertical split
-            const minSplit = Math.floor(node.width * (0.5 - this.SPLIT_RANDOMNESS / 2));
-            const maxSplit = Math.floor(node.width * (0.5 + this.SPLIT_RANDOMNESS / 2));
-            const split = minSplit + Math.floor(Math.random() * (maxSplit - minSplit));
-            
-            node.left = {
-                x: node.x,
-                y: node.y,
-                width: split,
-                height: node.height,
-                depth: node.depth + 1
-            };
-
-            node.right = {
-                x: node.x + split + 1,
-                y: node.y,
-                width: node.width - split - 1,
-                height: node.height,
-                depth: node.depth + 1
-            };
-
-            this.splitNode(node.left);
-            this.splitNode(node.right);
-        } 
-        else if (!isVertical && node.height > minSize * 2) {
-            // Horizontal split
-            const minSplit = Math.floor(node.height * (0.5 - this.SPLIT_RANDOMNESS / 2));
-            const maxSplit = Math.floor(node.height * (0.5 + this.SPLIT_RANDOMNESS / 2));
-            const split = minSplit + Math.floor(Math.random() * (maxSplit - minSplit));
-
-            node.left = {
-                x: node.x,
-                y: node.y,
-                width: node.width,
-                height: split,
-                depth: node.depth + 1
-            };
-
-            node.right = {
-                x: node.x,
-                y: node.y + split + 1,
-                width: node.width,
-                height: node.height - split - 1,
-                depth: node.depth + 1
-            };
-
-            this.splitNode(node.left);
-            this.splitNode(node.right);
-        }
-    }
-
-    private createRooms(node: BSPNode): void {
-        if (!node.left && !node.right) {
-            // This is a leaf node, create a room
-            const maxWidth = Math.min(node.width - this.ROOM_PADDING * 2, this.MAX_ROOM_SIZE);
-            const maxHeight = Math.min(node.height - this.ROOM_PADDING * 2, this.MAX_ROOM_SIZE);
-            
-            const roomWidth = Math.max(
-                Math.floor(Math.random() * (maxWidth - this.MIN_ROOM_SIZE)) + this.MIN_ROOM_SIZE,
-                this.MIN_ROOM_SIZE
-            );
-            const roomHeight = Math.max(
-                Math.floor(Math.random() * (maxHeight - this.MIN_ROOM_SIZE)) + this.MIN_ROOM_SIZE,
-                this.MIN_ROOM_SIZE
-            );
-
-            const roomX = node.x + this.ROOM_PADDING + Math.floor((node.width - this.ROOM_PADDING * 2 - roomWidth) / 2);
-            const roomY = node.y + this.ROOM_PADDING + Math.floor((node.height - this.ROOM_PADDING * 2 - roomHeight) / 2);
-
-            const room: Room = {
-                x: roomX,
-                y: roomY,
-                width: roomWidth,
-                height: roomHeight,
-                depth: node.depth
-            };
-
-            node.room = room;
-            this.rooms.push(room);
+    private splitNode(node: BSPNode, depth: number): void {
+        if (depth >= this.config.maxSplits) {
+            this.createRoom(node);
             return;
         }
 
-        if (node.left) this.createRooms(node.left);
-        if (node.right) this.createRooms(node.right);
+        // Determine split direction (horizontal or vertical)
+        const isHorizontal = node.width > node.height;
+
+        if (isHorizontal) {
+            // Calculate split point with randomness
+            const minSplit = node.x + this.config.minRoomSize;
+            const maxSplit = node.x + node.width - this.config.minRoomSize;
+            const splitPoint = Math.floor(minSplit + Math.random() * (maxSplit - minSplit));
+
+            // Create child nodes
+            node.left = {
+                x: node.x,
+                y: node.y,
+                width: splitPoint - node.x,
+                height: node.height
+            };
+
+            node.right = {
+                x: splitPoint,
+                y: node.y,
+                width: node.width - (splitPoint - node.x),
+                height: node.height
+            };
+        } else {
+            // Calculate split point with randomness
+            const minSplit = node.y + this.config.minRoomSize;
+            const maxSplit = node.y + node.height - this.config.minRoomSize;
+            const splitPoint = Math.floor(minSplit + Math.random() * (maxSplit - minSplit));
+
+            // Create child nodes
+            node.left = {
+                x: node.x,
+                y: node.y,
+                width: node.width,
+                height: splitPoint - node.y
+            };
+
+            node.right = {
+                x: node.x,
+                y: splitPoint,
+                width: node.width,
+                height: node.height - (splitPoint - node.y)
+            };
+        }
+
+        // Recursively split child nodes
+        this.splitNode(node.left!, depth + 1);
+        this.splitNode(node.right!, depth + 1);
     }
 
-    private placeEntranceAndExit(): void {
-        // Sort rooms by depth to find ones furthest apart in the BSP tree
-        const sortedRooms = [...this.rooms].sort((a, b) => a.depth - b.depth);
-        
-        // Place entrance in a room with lowest depth (closest to root)
-        this.entrance = sortedRooms[0];
-        
-        // Place exit in a room with highest depth (furthest from root)
-        this.exit = sortedRooms[sortedRooms.length - 1];
-    }
+    private createRoom(node: BSPNode): void {
+        // Add padding to room size
+        const padding = this.config.roomPadding;
+        const roomWidth = node.width - padding * 2;
+        const roomHeight = node.height - padding * 2;
 
-    private carveRooms(): void {
-        // Carve out all rooms
-        for (const room of this.rooms) {
-            for (let y = room.y; y < room.y + room.height; y++) {
-                for (let x = room.x; x < room.x + room.width; x++) {
+        // Skip if room is too small
+        if (roomWidth < this.config.minRoomSize || roomHeight < this.config.minRoomSize) {
+            return;
+        }
+
+        // Add randomness to room size
+        const randomWidth = Math.min(
+            Math.floor(roomWidth + Math.random() * this.config.splitRandomness * roomWidth),
+            this.config.maxRoomSize
+        );
+        const randomHeight = Math.min(
+            Math.floor(roomHeight + Math.random() * this.config.splitRandomness * roomHeight),
+            this.config.maxRoomSize
+        );
+
+        // Calculate room position with padding
+        const roomX = Math.floor(node.x + padding);
+        const roomY = Math.floor(node.y + padding);
+
+        // Create room
+        const room: Room = {
+            x: roomX,
+            y: roomY,
+            width: randomWidth,
+            height: randomHeight
+        };
+
+        // Add room to list
+        this.rooms.push(room);
+
+        // Create room in grid
+        for (let y = roomY; y < roomY + randomHeight; y++) {
+            for (let x = roomX; x < roomX + randomWidth; x++) {
+                if (x >= 0 && x < this.config.gridSize && y >= 0 && y < this.config.gridSize) {
                     this.grid[y][x] = false;
                 }
             }
         }
+    }
 
-        // Mark entrance and exit
-        if (this.entrance) {
-            const entranceCenter = {
-                x: this.entrance.x + Math.floor(this.entrance.width / 2),
-                y: this.entrance.y + Math.floor(this.entrance.height / 2)
-            };
-            this.grid[entranceCenter.y][entranceCenter.x] = false;
+    private placeEntranceAndExit(): { entranceX: number; entranceY: number; exitX: number; exitY: number } {
+        // Sort rooms by depth in BSP tree (first room is deepest)
+        const sortedRooms = [...this.rooms].sort((a, b) => {
+            const depthA = Math.min(a.x + a.width, a.y + a.height);
+            const depthB = Math.min(b.x + b.width, b.y + b.height);
+            return depthA - depthB;
+        });
+
+        // Place entrance in first room
+        const entranceRoom = sortedRooms[0];
+        const entranceX = entranceRoom.x + Math.floor(Math.random() * entranceRoom.width);
+        const entranceY = entranceRoom.y + Math.floor(Math.random() * entranceRoom.height);
+
+        // Place exit in last room
+        const exitRoom = sortedRooms[sortedRooms.length - 1];
+        const exitX = exitRoom.x + Math.floor(Math.random() * exitRoom.width);
+        const exitY = exitRoom.y + Math.floor(Math.random() * exitRoom.height);
+
+        return { entranceX, entranceY, exitX, exitY };
+    }
+
+    connectRooms(room1: Room, room2: Room): Point[] {
+        // Get room centers
+        const start: Point = {
+            x: room1.x + Math.floor(room1.width / 2),
+            y: room1.y + Math.floor(room1.height / 2)
+        };
+        const end: Point = {
+            x: room2.x + Math.floor(room2.width / 2),
+            y: room2.y + Math.floor(room2.height / 2)
+        };
+
+        console.log(`\nAttempting to connect rooms:`);
+        console.log(`Start room: (${room1.x},${room1.y}) ${room1.width}x${room1.height}`);
+        console.log(`End room: (${room2.x},${room2.y}) ${room2.width}x${room2.height}`);
+        console.log(`Start point: (${start.x},${start.y})`);
+        console.log(`End point: (${end.x},${end.y})`);
+
+        // Initialize open and closed sets
+        const openSet: AStarNode[] = [];
+        const closedSet = new Set<string>();
+        const nodeMap = new Map<string, AStarNode>();
+
+        // Helper function to get key for a point
+        const getKey = (point: Point): string => `${point.x},${point.y}`;
+
+        // Helper function to get Manhattan distance
+        const getManhattanDistance = (p1: Point, p2: Point): number => {
+            return Math.abs(p1.x - p2.x) + Math.abs(p1.y - p2.y);
+        };
+
+        // Helper function to get cost for a tile
+        const getTileCost = (x: number, y: number): number => {
+            // Prefer walls (cost 1) over floor tiles (cost 3)
+            return this.grid[y][x] ? 1 : 3;
+        };
+
+        // Helper function to get valid neighbors (orthogonal only)
+        const getValidNeighbors = (point: Point): Point[] => {
+            const neighbors: Point[] = [];
+            const directions = [
+                { x: 0, y: 1 },  // down
+                { x: 0, y: -1 }, // up
+                { x: 1, y: 0 },  // right
+                { x: -1, y: 0 }  // left
+            ];
+
+            for (const dir of directions) {
+                const newX = point.x + dir.x;
+                const newY = point.y + dir.y;
+
+                // Exclude border tiles (first and last row/column)
+                if (newX > 0 && newX < this.config.gridSize - 1 &&
+                    newY > 0 && newY < this.config.gridSize - 1) {
+                    neighbors.push({ x: newX, y: newY });
+                }
+            }
+
+            return neighbors;
+        };
+
+        // Create start node
+        const startNode: AStarNode = {
+            point: start,
+            g: 0,
+            h: getManhattanDistance(start, end),
+            f: getManhattanDistance(start, end)
+        };
+        startNode.f = startNode.g + startNode.h;
+
+        // Add start node to open set
+        openSet.push(startNode);
+        nodeMap.set(getKey(start), startNode);
+
+        let iterations = 0;
+        const maxIterations = 1000; // Prevent infinite loops
+
+        // A* main loop
+        while (openSet.length > 0 && iterations < maxIterations) {
+            iterations++;
+            
+            // Find node with lowest f in open set
+            let currentIndex = 0;
+            for (let i = 1; i < openSet.length; i++) {
+                if (openSet[i].f < openSet[currentIndex].f) {
+                    currentIndex = i;
+                }
+            }
+            const current = openSet[currentIndex];
+
+            // Check if we reached the end
+            if (current.point.x === end.x && current.point.y === end.y) {
+                // Reconstruct path
+                const path: Point[] = [];
+                let node: AStarNode | undefined = current;
+                while (node) {
+                    path.unshift(node.point);
+                    node = node.parent;
+                }
+
+                // Update grid with the path
+                let wallCount = 0;
+                for (const point of path) {
+                    if (this.grid[point.y][point.x]) wallCount++;
+                    this.grid[point.y][point.x] = false;
+                }
+                console.log(`Path found! Length: ${path.length}, Walls converted: ${wallCount}`);
+                return path;
+            }
+
+            // Move current node from open to closed set
+            openSet.splice(currentIndex, 1);
+            closedSet.add(getKey(current.point));
+
+            // Check all neighbors
+            const neighbors = getValidNeighbors(current.point);
+            console.log(`Iteration ${iterations}: Current point (${current.point.x},${current.point.y}), Found ${neighbors.length} valid neighbors`);
+            
+            for (const neighbor of neighbors) {
+                const neighborKey = getKey(neighbor);
+                if (closedSet.has(neighborKey)) continue;
+
+                const cost = getTileCost(neighbor.x, neighbor.y);
+                const tentativeG = current.g + cost;
+
+                let neighborNode = nodeMap.get(neighborKey);
+                if (!neighborNode) {
+                    // Create new node
+                    neighborNode = {
+                        point: neighbor,
+                        g: tentativeG,
+                        h: getManhattanDistance(neighbor, end),
+                        f: tentativeG + getManhattanDistance(neighbor, end),
+                        parent: current
+                    };
+                    openSet.push(neighborNode);
+                    nodeMap.set(neighborKey, neighborNode);
+                } else if (tentativeG < neighborNode.g) {
+                    // Update existing node
+                    neighborNode.g = tentativeG;
+                    neighborNode.f = tentativeG + neighborNode.h;
+                    neighborNode.parent = current;
+                }
+            }
         }
 
-        if (this.exit) {
-            const exitCenter = {
-                x: this.exit.x + Math.floor(this.exit.width / 2),
-                y: this.exit.y + Math.floor(this.exit.height / 2)
-            };
-            this.grid[exitCenter.y][exitCenter.x] = false;
-        }
+        console.log(`No path found after ${iterations} iterations`);
+        console.log(`Open set size: ${openSet.length}`);
+        console.log(`Closed set size: ${closedSet.size}`);
+        return [];
+    }
+
+    getGrid(): boolean[][] {
+        return this.grid;
     }
 } 

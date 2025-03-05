@@ -40,17 +40,14 @@ export class Game extends Scene {
     private debugGraphics!: Phaser.GameObjects.Graphics;
     private playerGridMarker!: Phaser.GameObjects.Rectangle;
     private playerVisitedTiles: {x: number, y: number}[] = [];
-    
-    // Corridor management
-    private readonly CORRIDOR_SWITCH_TIME = 5000; // 10 seconds
-    private readonly TILE_UPDATE_TIME = 500; // 1 second
-    private tilesToAdd: TileChange[] = [];
-    private tilesToRemove: TileChange[] = [];
-    private lastCorridorSwitch: number = 0;
-    private lastTileUpdate: number = 0;
     private graphics!: Phaser.GameObjects.Graphics;
     private rooms: Room[] = [];
     private roomTiles: boolean[][] = []; // Tracks which tiles are part of rooms
+    private roomConnections: Set<string> = new Set(); // Tracks which rooms are connected
+    private paths: Map<string, Point[]> = new Map(); // Tracks all paths between rooms
+    private readonly ROOM_CONNECTION_CHECK_TIME = 5000; // Check every 10 seconds
+    private lastRoomConnectionCheck: number = 0;
+    private levelGenerator!: LevelGenerator; // Store the generator for later use
 
     constructor() {
         super({ key: 'Game' });
@@ -93,42 +90,6 @@ export class Game extends Scene {
         return null;
     }
 
-    private updateTileQueues(): void {
-        if (this.tilesToAdd.length > 0) {
-            const tile = this.tilesToAdd.shift();
-            if (tile) {
-                this.grid[tile.y][tile.x] = tile.isWall;
-                this.redrawTile(tile.x, tile.y);
-            }
-        }
-        if (this.tilesToRemove.length > 0) {
-            const tile = this.tilesToRemove.shift();
-            if (tile) {
-                this.grid[tile.y][tile.x] = tile.isWall;
-                this.redrawTile(tile.x, tile.y);
-            }
-        }
-        //check if player is out of bounds
-        // Check player position before removing the tile
-        const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
-        const playerGridY = Math.floor(this.player.y / this.CELL_SIZE);
-
-        // If player is in the tile being removed
-        if (this.grid[playerGridY][playerGridX]) {
-            const safeSpot = this.findSafeSpot(playerGridX, playerGridY);
-            if (safeSpot) {
-                // Move player to safe spot
-                this.player.setPosition(
-                    safeSpot.x * this.CELL_SIZE + this.CELL_SIZE / 2,
-                    safeSpot.y * this.CELL_SIZE + this.CELL_SIZE / 2
-                );
-                // Stop any current movement
-                this.isMoving = false;
-                this.player.setVelocity(0, 0);
-            }
-        }
-    }
-
     private redrawTile(x: number, y: number): void {
         // Clear all graphics and redraw everything
         this.graphics.clear();
@@ -140,7 +101,7 @@ export class Game extends Scene {
         // Redraw all tiles and recreate colliders
         for (let y = 0; y < this.GRID_SIZE; y++) {
             for (let x = 0; x < this.GRID_SIZE; x++) {
-                if (this.grid[y][x]) {
+                if (this.grid[y][x] || x == 0 || y == 0 || x == this.GRID_SIZE - 1 || y == this.GRID_SIZE - 1) {
                     const hasEmptyNeighbor = 
                         // Orthogonal neighbors
                         (y > 0 && !this.grid[y-1][x]) || // top
@@ -210,191 +171,126 @@ export class Game extends Scene {
         this.graphics.stroke();
     }
 
-    private drawInitialGrid(): void {
-        this.graphics.clear();
-        this.graphics.lineStyle(2, 0xFFFFFF);
-        
-        for (let y = 0; y < this.GRID_SIZE; y++) {
-            for (let x = 0; x < this.GRID_SIZE; x++) {
-                if (this.grid[y][x]) {
-                    const hasEmptyNeighbor = 
-                        // Orthogonal neighbors
-                        (y > 0 && !this.grid[y-1][x]) || // top
-                        (y < this.GRID_SIZE - 1 && !this.grid[y+1][x]) || // bottom
-                        (x > 0 && !this.grid[y][x-1]) || // left
-                        (x < this.GRID_SIZE - 1 && !this.grid[y][x+1]) || // right
-                        // Diagonal neighbors
-                        (x > 0 && y > 0 && !this.grid[y-1][x-1]) || // top-left
-                        (x < this.GRID_SIZE - 1 && y > 0 && !this.grid[y-1][x+1]) || // top-right
-                        (x > 0 && y < this.GRID_SIZE - 1 && !this.grid[y+1][x-1]) || // bottom-left
-                        (x < this.GRID_SIZE - 1 && y < this.GRID_SIZE - 1 && !this.grid[y+1][x+1]); // bottom-right
-
-                    if (hasEmptyNeighbor) {
-                        this.drawJaggedTile(x, y);
-                    }
-                }
-            }
-        }
+    private getRoomConnectionKey(room1: Room, room2: Room): string {
+        const [id1, id2] = [this.rooms.indexOf(room1), this.rooms.indexOf(room2)];
+        return `${Math.min(id1, id2)},${Math.max(id1, id2)}`;
     }
 
-    private switchCorridors(): void {
-        // Find a corridor to close
-        const corridorToClose = this.findRandomCorridor();
-        if (corridorToClose) {
-            // Add walls to close the corridor
-            for (const tile of corridorToClose) {
-                this.tilesToAdd.push({ x: tile.x, y: tile.y, isWall: true });
-            }
-        }
-
-        // Create a new corridor
-        const newCorridor = this.createNewCorridor();
-        if (newCorridor) {
-            // Remove walls to open the new corridor
-            for (const tile of newCorridor) {
-                this.tilesToRemove.push({ x: tile.x, y: tile.y, isWall: false });
-            }
-        }
+    private areRoomsConnected(room1: Room, room2: Room): boolean {
+        return this.roomConnections.has(this.getRoomConnectionKey(room1, room2));
     }
 
-    private findRooms(): void {
-        this.rooms = [];
-        this.roomTiles = Array(this.GRID_SIZE).fill(false).map(() => Array(this.GRID_SIZE).fill(false));
-        const visited = Array(this.GRID_SIZE).fill(false).map(() => Array(this.GRID_SIZE).fill(false));
-        
-        for (let y = 0; y < this.GRID_SIZE; y++) {
-            for (let x = 0; x < this.GRID_SIZE; x++) {
-                if (!this.grid[y][x] && !visited[y][x]) {
-                    // Found potential room start
-                    let width = 0;
-                    let height = 0;
-                    
-                    // Find width
-                    let tx = x;
-                    while (tx < this.GRID_SIZE && !this.grid[y][tx]) {
-                        tx++;
-                        width++;
-                    }
-                    
-                    // Find height
-                    let ty = y;
-                    while (ty < this.GRID_SIZE) {
-                        let isRowEmpty = true;
-                        for (let rx = x; rx < x + width; rx++) {
-                            if (this.grid[ty][rx]) {
-                                isRowEmpty = false;
-                                break;
-                            }
-                        }
-                        if (!isRowEmpty) break;
-                        ty++;
-                        height++;
-                    }
-                    
-                    // Mark as visited and mark room tiles
-                    for (let vy = y; vy < y + height; vy++) {
-                        for (let vx = x; vx < x + width; vx++) {
-                            visited[vy][vx] = true;
-                            if (width >= 2 && height >= 2) {
-                                this.roomTiles[vy][vx] = true;
-                            }
-                        }
-                    }
-                    
-                    // Add room if it's big enough
-                    if (width >= 2 && height >= 2) {
-                        this.rooms.push({ x, y, width, height });
-                    }
-                }
-            }
-        }
-    }
-
-    private findRandomCorridor(): TileChange[] | null {
-        const corridor: TileChange[] = [];
-        
-        // Look for a sequence of empty tiles surrounded by walls that aren't in rooms
-        for (let y = 1; y < this.GRID_SIZE - 1; y++) {
-            for (let x = 1; x < this.GRID_SIZE - 1; x++) {
-                if (!this.grid[y][x] && !this.roomTiles[y][x] && 
-                    (this.grid[y-1][x] || this.grid[y+1][x]) && 
-                    (this.grid[y][x-1] || this.grid[y][x+1])) {
-                    // This might be part of a corridor and is not in a room
-                    corridor.push({ x, y, isWall: true });
+    private removeAllConnections(): void {
+        // Restore walls for all paths, but only for tiles that weren't part of rooms
+        for (const path of this.paths.values()) {
+            for (const point of path) {
+                // Only restore wall if this tile wasn't part of a room originally
+                if (!this.roomTiles[point.y][point.x]) {
+                    this.grid[point.y][point.x] = true;
                 }
             }
         }
         
-        return corridor.length > 0 ? corridor : null;
+        // Clear all connections and paths
+        this.roomConnections.clear();
+        this.paths.clear();
+        
+        // Redraw the grid
+        this.redrawTile(0, 0);
+        
+        console.log('Removed all connections');
     }
 
-    private createNewCorridor(): TileChange[] | null {
-        if (this.rooms.length < 2) return null;
+    private connectRooms(room1: Room, room2: Room): void {
+        console.log(`\nConnecting rooms:`);
+        console.log(`Room 1: (${room1.x},${room1.y}) ${room1.width}x${room1.height}`);
+        console.log(`Room 2: (${room2.x},${room2.y}) ${room2.width}x${room2.height}`);
         
-        // Pick two random different rooms
-        const roomIndex1 = Math.floor(Math.random() * this.rooms.length);
-        let roomIndex2 = Math.floor(Math.random() * (this.rooms.length - 1));
-        if (roomIndex2 >= roomIndex1) roomIndex2++;
+        const path = this.levelGenerator.connectRooms(room1, room2);
         
-        const room1 = this.rooms[roomIndex1];
-        const room2 = this.rooms[roomIndex2];
-        
-        // Pick random points in each room
-        const start: Point = {
-            x: room1.x + Math.floor(Math.random() * room1.width),
-            y: room1.y + Math.floor(Math.random() * room1.height)
-        };
-        
-        const end: Point = {
-            x: room2.x + Math.floor(Math.random() * room2.width),
-            y: room2.y + Math.floor(Math.random() * room2.height)
-        };
-        
-        // Create L-shaped or Z-shaped path
-        const corridor: TileChange[] = [];
-        const useZShape = Math.random() < 0.5;
-        
-        if (useZShape) {
-            const midX = Math.floor((start.x + end.x) / 2);
+        if (path.length > 0) {
+            console.log(`Successfully created corridor with ${path.length} points`);
+            const connectionKey = this.getRoomConnectionKey(room1, room2);
             
-            // Add horizontal path from start to midpoint
-            for (let x = Math.min(start.x, midX); x <= Math.max(start.x, midX); x++) {
-                if (this.grid[start.y][x] && !this.roomTiles[start.y][x]) {
-                    corridor.push({ x, y: start.y, isWall: false });
-                }
-            }
+            // Mark rooms as connected
+            this.roomConnections.add(connectionKey);
             
-            // Add vertical path at midpoint
-            for (let y = Math.min(start.y, end.y); y <= Math.max(start.y, end.y); y++) {
-                if (this.grid[y][midX] && !this.roomTiles[y][midX]) {
-                    corridor.push({ x: midX, y, isWall: false });
-                }
-            }
+            // Store the path
+            this.paths.set(connectionKey, path);
             
-            // Add horizontal path from midpoint to end
-            for (let x = Math.min(midX, end.x); x <= Math.max(midX, end.x); x++) {
-                if (this.grid[end.y][x] && !this.roomTiles[end.y][x]) {
-                    corridor.push({ x, y: end.y, isWall: false });
+            // Update our grid with the changes from LevelGenerator
+            this.grid = this.levelGenerator.getGrid();
+            
+            // Log grid changes
+            let wallCount = 0;
+            let floorCount = 0;
+            for (let y = 0; y < this.GRID_SIZE; y++) {
+                for (let x = 0; x < this.GRID_SIZE; x++) {
+                    if (this.grid[y][x]) wallCount++;
+                    else floorCount++;
                 }
             }
+            console.log(`Grid updated: ${wallCount} walls, ${floorCount} floor tiles`);
+            
+            // Redraw the grid to show the new corridor
+            this.redrawTile(0, 0);
         } else {
-            // L-shaped path
-            // First go horizontally
-            for (let x = Math.min(start.x, end.x); x <= Math.max(start.x, end.x); x++) {
-                if (this.grid[start.y][x] && !this.roomTiles[start.y][x]) {
-                    corridor.push({ x, y: start.y, isWall: false });
-                }
-            }
-            
-            // Then vertically
-            for (let y = Math.min(start.y, end.y); y <= Math.max(start.y, end.y); y++) {
-                if (this.grid[y][end.x] && !this.roomTiles[y][end.x]) {
-                    corridor.push({ x: end.x, y, isWall: false });
-                }
+            console.log('Failed to create corridor - no path found');
+        }
+    }
+
+    private getRoomConnectionCount(room: Room): number {
+        let count = 0;
+        for (const connection of this.roomConnections) {
+            const [id1, id2] = connection.split(',').map(Number);
+            if (id1 === this.rooms.indexOf(room) || id2 === this.rooms.indexOf(room)) {
+                count++;
             }
         }
+        return count;
+    }
+
+    private connectUnconnectedRooms(): void {
+        console.log('\nAttempting to connect unconnected rooms:');
+        console.log(`Total rooms: ${this.rooms.length}`);
+        console.log(`Current connections: ${this.roomConnections.size}`);
         
-        return corridor.length > 0 ? corridor : null;
+        // Keep track of rooms with 0 connections
+        const unconnectedRooms = this.rooms.filter(room => this.getRoomConnectionCount(room) === 0);
+        console.log(`Rooms with 0 connections: ${unconnectedRooms.length}`);
+        
+        while (unconnectedRooms.length > 0) {
+            // Get a random room with 0 connections
+            const room1Index = Math.floor(Math.random() * unconnectedRooms.length);
+            const room1 = unconnectedRooms[room1Index];
+            
+            // Find potential room2 (rooms with 0-1 connections)
+            const potentialRoom2s = this.rooms.filter(room => 
+                room !== room1 && 
+                this.getRoomConnectionCount(room) < 2 &&
+                !this.areRoomsConnected(room1, room)
+            );
+            
+            if (potentialRoom2s.length === 0) {
+                // No valid room2 found, remove room1 from unconnected list
+                unconnectedRooms.splice(room1Index, 1);
+                continue;
+            }
+            
+            // Get a random room2 from potential candidates
+            const room2 = potentialRoom2s[Math.floor(Math.random() * potentialRoom2s.length)];
+            
+            console.log(`Attempting to connect rooms:`);
+            console.log(`Room 1: (${room1.x},${room1.y}) ${room1.width}x${room1.height}`);
+            console.log(`Room 2: (${room2.x},${room2.y}) ${room2.width}x${room2.height}`);
+            
+            this.connectRooms(room1, room2);
+            
+            // Remove room1 from unconnected list if it now has a connection
+            if (this.getRoomConnectionCount(room1) > 0) {
+                unconnectedRooms.splice(room1Index, 1);
+            }
+        }
     }
 
     create() {
@@ -417,9 +313,18 @@ export class Game extends Scene {
         this.grid = levelData.grid;
         this.exitX = levelData.exitX;
         this.exitY = levelData.exitY;
-        
-        // Find rooms after grid is created
-        this.findRooms();
+        this.rooms = levelData.rooms;
+        this.levelGenerator = levelGenerator; // Store the generator for later use
+
+        // Initialize room tiles array
+        this.roomTiles = Array(this.GRID_SIZE).fill(false).map(() => Array(this.GRID_SIZE).fill(false));
+        for (const room of this.rooms) {
+            for (let y = room.y; y < room.y + room.height; y++) {
+                for (let x = room.x; x < room.x + room.width; x++) {
+                    this.roomTiles[y][x] = true;
+                }
+            }
+        }
 
         // Create a container for the grid
         this.gridContainer = this.add.container(0, 0);
@@ -449,6 +354,8 @@ export class Game extends Scene {
             0x00ff00
         );
         this.gridContainer.add(exitMarker);
+
+        this.updateLayout();
 
         // Create player with physics
         const playerX = levelData.entranceX * this.CELL_SIZE + this.CELL_SIZE / 2;
@@ -628,17 +535,6 @@ export class Game extends Scene {
             });
         }
 
-        // Check if it's time to update tiles
-        if (time - this.lastTileUpdate >= this.TILE_UPDATE_TIME) {
-            this.updateTileQueues();
-            this.lastTileUpdate = time;
-
-            // If both queues are empty, trigger new corridor switch
-            if (this.tilesToAdd.length === 0 && this.tilesToRemove.length === 0) {
-                this.switchCorridors();
-            }
-        }
-
         // Handle movement
         if (this.isMoving && this.input.activePointer.isDown && this.input.activePointer.button === 0) {
             // Calculate distance to target
@@ -683,5 +579,21 @@ export class Game extends Scene {
         if (this.checkExitReached()) {
             this.nextLevel();
         }
+
+        // Check if it's time to update connections
+        if (time - this.lastRoomConnectionCheck >= this.ROOM_CONNECTION_CHECK_TIME) {
+            // Remove all existing connections
+            this.updateLayout();
+            this.lastRoomConnectionCheck = time;
+        }
+    }
+
+    updateLayout(){
+        // Remove all existing connections
+        this.removeAllConnections();
+        
+        // Then connect unconnected rooms
+        this.connectUnconnectedRooms();
     }
 } 
+
