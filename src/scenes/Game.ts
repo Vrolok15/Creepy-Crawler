@@ -24,6 +24,7 @@ export class Game extends Scene {
     private readonly GRID_SIZE = 50;
     private readonly CELL_SIZE = 32;
     private player!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
+    private playerSprite!: Phaser.GameObjects.Sprite;
     private readonly PLAYER_SIZE = 10;
     private readonly PLAYER_SPEED = 150;
     private targetX: number = 0;
@@ -56,6 +57,17 @@ export class Game extends Scene {
     private levelGenerator!: LevelGenerator; // Store the generator for later use
     private lightingMask!: Phaser.GameObjects.Graphics; // For the lighting mask
     private mask!: Phaser.Display.Masks.BitmapMask; // The actual mask
+
+    private player_down_idle!: Phaser.GameObjects.Sprite;
+    private player_down_walk1!: Phaser.GameObjects.Sprite;
+    private player_down_walk2!: Phaser.GameObjects.Sprite;
+    private player_left_idle!: Phaser.GameObjects.Sprite;
+    private player_left_walk1!: Phaser.GameObjects.Sprite;
+    private player_left_walk2!: Phaser.GameObjects.Sprite;
+    private player_up_idle!: Phaser.GameObjects.Sprite;
+    private player_up_walk1!: Phaser.GameObjects.Sprite;
+    private player_up_walk2!: Phaser.GameObjects.Sprite;
+    private player_death!: Phaser.GameObjects.Sprite;
 
     constructor() {
         super({ key: 'Game' });
@@ -189,7 +201,6 @@ export class Game extends Scene {
     }
 
     private removeAllConnections(): void {
-        console.log('[Grid Debug] Starting removeAllConnections');
         // Clear both queues first
         this.wallsToAdd = [];
         this.wallsToRemove = [];
@@ -199,7 +210,6 @@ export class Game extends Scene {
             for (const point of path) {
                 // Only add to queue if this tile wasn't part of a room originally
                 if (!this.roomTiles[point.y][point.x]) {
-                    console.log(`[Grid Debug] Queuing wall addition at (${point.x}, ${point.y})`);
                     this.wallsToAdd.push(point);
                 }
             }
@@ -209,11 +219,9 @@ export class Game extends Scene {
         this.roomConnections.clear();
         this.paths.clear();
         
-        console.log('[Queue] Queued all connections for removal');
     }
 
     private connectRooms(room1: Room, room2: Room): void {
-        console.log(`[Grid Debug] Starting connectRooms between rooms ${this.rooms.indexOf(room1)} and ${this.rooms.indexOf(room2)}`);
         const path = this.levelGenerator.connectRooms(room1, room2);
         
         if (path.length > 0) {
@@ -228,11 +236,8 @@ export class Game extends Scene {
             for (const point of path) {
                 if (!this.roomTiles[point.y][point.x]) {
                     this.wallsToRemove.push(point);
-                    console.log(`[Grid Debug] Queued wall removal at (${point.x}, ${point.y}) - Current state: ${this.grid[point.y][point.x]}`);
                 }
             }
-            console.log(`[Queue] Added ${path.length} walls to removal queue for path between rooms ${this.rooms.indexOf(room1)} and ${this.rooms.indexOf(room2)}`);
-
         }
     }
 
@@ -247,13 +252,8 @@ export class Game extends Scene {
             const point = this.wallsToAdd.shift()!;
             // Don't add wall if it's the exit position
             if (point.x !== this.exitPoint.x || point.y !== this.exitPoint.y) {
-                console.log(`[Grid Debug] Before adding wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
                 this.grid[point.y][point.x] = true;
-                console.log(`[Grid Debug] After adding wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
-                console.log(`[Wall Change] Added wall at (${point.x}, ${point.y})`);
-            } else {
-                console.log(`[Wall Change] Skipped adding wall at exit position (${point.x}, ${point.y})`);
-            }
+            } 
         }
 
         // Process one wall to remove
@@ -287,10 +287,7 @@ export class Game extends Scene {
                             if (index > -1) {
                                 this.wallsToRemove.splice(index, 1);
                             }
-                            console.log(`[Grid Debug] Before removing entrance wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
                             this.grid[point.y][point.x] = false;
-                            console.log(`[Grid Debug] After removing entrance wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
-                            console.log(`[Wall Change] Removed entrance wall at (${point.x}, ${point.y})`);
                             break;
                         }
                     }
@@ -300,16 +297,12 @@ export class Game extends Scene {
             // If no entrance wall was found, process the next wall in the queue
             if (this.wallsToRemove.length > 0) {
                 const point = this.wallsToRemove.shift()!;
-                console.log(`[Grid Debug] Before removing wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
                 this.grid[point.y][point.x] = false;
-                console.log(`[Grid Debug] After removing wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
-                console.log(`[Wall Change] Removed wall at (${point.x}, ${point.y})`);
             }
         }
 
         // Log queue statistics if there are any changes
         if (this.wallsToAdd.length > 0 || this.wallsToRemove.length > 0) {
-            console.log(`[Queue Stats] Walls to add: ${this.wallsToAdd.length}, Walls to remove: ${this.wallsToRemove.length}`);
             this.redrawTile(0, 0);
         }
     }
@@ -389,7 +382,6 @@ export class Game extends Scene {
     }
 
     private removeSomeConnections(): void {
-        console.log('[Grid Debug] Starting removeSomeConnections');
         this.wallsToAdd = [];
         
         // Get all paths
@@ -412,7 +404,6 @@ export class Game extends Scene {
                 for (const point of path) {
                     // Only add to queue if this tile wasn't part of a room originally
                     if (!this.roomTiles[point.y][point.x]) {
-                        console.log(`[Grid Debug] Queuing wall addition at (${point.x}, ${point.y})`);
                         this.wallsToAdd.push(point);
                     }
                 }
@@ -425,10 +416,24 @@ export class Game extends Scene {
             this.paths.delete(connectionKey);
         }
         
-        console.log(`[Queue] Queued ${connectionsToRemove.size} connections for removal`);
+    }
+
+    preload() {
+        // Load player sprites
+        this.load.image('player_down_idle', 'assets/sprites/brother_stand_down.png');
+        this.load.image('player_down_walk1', 'assets/sprites/brother_walk_down_1.png');
+        this.load.image('player_down_walk2', 'assets/sprites/brother_walk_down_2.png');
+        this.load.image('player_left_idle', 'assets/sprites/brother_stand_side.png');
+        this.load.image('player_left_walk1', 'assets/sprites/brother_walk_side_1.png');
+        this.load.image('player_left_walk2', 'assets/sprites/brother_walk_side_2.png');
+        this.load.image('player_up_idle', 'assets/sprites/brother_stand_up.png');
+        this.load.image('player_up_walk1', 'assets/sprites/brother_walk_up_1.png');
+        this.load.image('player_up_walk2', 'assets/sprites/brother_walk_up_2.png');
+        this.load.image('player_death', 'assets/sprites/brother_skeleton.png');
     }
 
     create() {
+
         // Enable physics
         this.physics.world.setBounds(0, 0, this.GRID_SIZE * this.CELL_SIZE, this.GRID_SIZE * this.CELL_SIZE);
         
@@ -450,7 +455,6 @@ export class Game extends Scene {
             splitRandomness: 0.25
         });
         const levelData = levelGenerator.generateLevel();
-        console.log('[Grid Debug] Initial grid state from level generator');
         
         // Initialize grid and room data first
         this.grid = levelData.grid;
@@ -503,13 +507,6 @@ export class Game extends Scene {
 
         // Create a circle texture for the player
         const playerGraphics = this.add.graphics();
-        playerGraphics.lineStyle(2, 0xff0000);
-        playerGraphics.fillStyle(0xff0000);
-        playerGraphics.beginPath();
-        playerGraphics.arc(this.PLAYER_SIZE, this.PLAYER_SIZE, this.PLAYER_SIZE / 2, 0, Math.PI * 2);
-        playerGraphics.closePath();
-        playerGraphics.fill();
-        playerGraphics.stroke();
 
         // Generate texture from graphics
         const texture = playerGraphics.generateTexture('player', this.PLAYER_SIZE * 2, this.PLAYER_SIZE * 2);
@@ -518,6 +515,10 @@ export class Game extends Scene {
         // Create player sprite with the circle texture
         this.player = this.physics.add.sprite(playerX, playerY, 'player');
         this.player.setCircle(this.PLAYER_SIZE / 2, this.PLAYER_SIZE / 2, this.PLAYER_SIZE / 2);
+
+        //create player sprite to follow the circle
+        this.playerSprite = this.add.sprite(playerX, playerY, 'player_down_idle');
+        this.playerSprite.setDepth(1);
 
         // Add collision between player and walls
         this.physics.add.collider(this.player, this.wallGroup);
@@ -529,7 +530,7 @@ export class Game extends Scene {
 
         // Set up camera
         this.cameras.main.startFollow(this.player);
-        this.cameras.main.setZoom(1);
+        this.cameras.main.setZoom(2);
 
         // Add level counter
         this.levelText = this.add.text(16, 16, `Level: ${this.currentLevel}`, {
@@ -628,7 +629,6 @@ export class Game extends Scene {
     }
 
     private nextLevel(): void {
-        console.log('[Game] Starting next level...');
         this.currentLevel++;
         
         // Clear all queues
@@ -813,15 +813,18 @@ export class Game extends Scene {
             }
 
             this.player.setVelocity(velocity.x, velocity.y);
+            // Update visual sprite position to match physics player
+            this.playerSprite.setPosition(this.player.x, this.player.y);
         } else if (!this.input.activePointer.isDown || this.input.activePointer.button !== 0) {
             // Stop movement if mouse button is released
             this.isMoving = false;
             this.player.setVelocity(0, 0);
+            // Update visual sprite position to match physics player
+            this.playerSprite.setPosition(this.player.x, this.player.y);
         }
 
         // Check if player reached the exit
         if (this.checkExitReached()) {
-            console.log('[Game] Exit reached! Moving to next level...');
             this.nextLevel();
         }
 

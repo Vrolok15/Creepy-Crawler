@@ -258,12 +258,6 @@ export class LevelGenerator {
             y: room2.y + Math.floor(room2.height / 2)
         };
 
-        console.log(`\nAttempting to connect rooms:`);
-        console.log(`Start room: (${room1.x},${room1.y}) ${room1.width}x${room1.height}`);
-        console.log(`End room: (${room2.x},${room2.y}) ${room2.width}x${room2.height}`);
-        console.log(`Start point: (${start.x},${start.y})`);
-        console.log(`End point: (${end.x},${end.y})`);
-
         // Initialize open and closed sets
         const openSet: AStarNode[] = [];
         const closedSet = new Set<string>();
@@ -351,7 +345,6 @@ export class LevelGenerator {
                 for (const point of path) {
                     if (this.grid[point.y][point.x]) wallCount++;
                 }
-                console.log(`Path found! Length: ${path.length}, Walls to convert: ${wallCount}`);
                 return path;
             }
 
@@ -361,7 +354,6 @@ export class LevelGenerator {
 
             // Check all neighbors
             const neighbors = getValidNeighbors(current.point);
-            console.log(`Iteration ${iterations}: Current point (${current.point.x},${current.point.y}), Found ${neighbors.length} valid neighbors`);
             
             for (const neighbor of neighbors) {
                 const neighborKey = getKey(neighbor);
@@ -391,9 +383,6 @@ export class LevelGenerator {
             }
         }
 
-        console.log(`No path found after ${iterations} iterations`);
-        console.log(`Open set size: ${openSet.length}`);
-        console.log(`Closed set size: ${closedSet.size}`);
         return [];
     }
 
