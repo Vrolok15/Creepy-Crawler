@@ -39,6 +39,7 @@ export class Game extends Scene {
     private debugText!: Phaser.GameObjects.Text;
     private debugGraphics!: Phaser.GameObjects.Graphics;
     private playerGridMarker!: Phaser.GameObjects.Rectangle;
+    private playerVisitedTiles: {x: number, y: number}[] = [];
     
     // Corridor management
     private readonly CORRIDOR_SWITCH_TIME = 5000; // 10 seconds
@@ -56,7 +57,17 @@ export class Game extends Scene {
     }
 
     private findSafeSpot(currentX: number, currentY: number): Point | null {
-        // Check adjacent tiles in this order: right, left, down, up, and diagonals
+        // Go through visited tiles from most recent to oldest
+        for (let i = this.playerVisitedTiles.length - 1; i >= 0; i--) {
+            const tile = this.playerVisitedTiles[i];
+            
+            // Check if this tile is currently safe (not a wall)
+            if (!this.grid[tile.y][tile.x]) {
+                return { x: tile.x, y: tile.y };
+            }
+        }
+
+        // If no safe visited tiles found, try adjacent tiles as fallback
         const directions = [
             { x: 1, y: 0 },   // right
             { x: -1, y: 0 },  // left
@@ -72,7 +83,6 @@ export class Game extends Scene {
             const newX = currentX + dir.x;
             const newY = currentY + dir.y;
 
-            // Check if the new position is within bounds and is a floor tile
             if (newX >= 0 && newX < this.GRID_SIZE &&
                 newY >= 0 && newY < this.GRID_SIZE &&
                 !this.grid[newY][newX]) {
@@ -572,6 +582,51 @@ export class Game extends Scene {
             playerGridX * this.CELL_SIZE + this.CELL_SIZE / 2,
             playerGridY * this.CELL_SIZE + this.CELL_SIZE / 2
         );
+
+        // Check if player is in a safe spot
+        if (this.grid[playerGridY][playerGridX]) {
+            const safeSpot = this.findSafeSpot(playerGridX, playerGridY);
+            if (safeSpot) {
+                // Move player to safe spot
+                this.player.setPosition(
+                    safeSpot.x * this.CELL_SIZE + this.CELL_SIZE / 2,
+                    safeSpot.y * this.CELL_SIZE + this.CELL_SIZE / 2
+                );
+                // Stop any current movement
+                this.isMoving = false;
+                this.player.setVelocity(0, 0);
+            }
+        }
+
+        // Track visited tiles
+        const currentTile = { x: playerGridX, y: playerGridY };
+        const existingIndex = this.playerVisitedTiles.findIndex(tile => 
+            tile.x === currentTile.x && tile.y === currentTile.y
+        );
+
+        if (existingIndex !== -1) {
+            // Remove from current position and add to end (top)
+            this.playerVisitedTiles.splice(existingIndex, 1);
+        }
+        this.playerVisitedTiles.push(currentTile);
+
+        // Update visited tiles visualization in debug mode
+        if (this.debugMode) {
+            this.debugGraphics.clear();
+            this.debugGraphics.lineStyle(2, 0x00ff00);
+            
+            // Draw visited tiles with different colors based on recency
+            this.playerVisitedTiles.forEach((tile, index) => {
+                const alpha = 0.3 + (index / this.playerVisitedTiles.length) * 0.7;
+                this.debugGraphics.fillStyle(0x00ff00, alpha);
+                this.debugGraphics.fillRect(
+                    tile.x * this.CELL_SIZE,
+                    tile.y * this.CELL_SIZE,
+                    this.CELL_SIZE,
+                    this.CELL_SIZE
+                );
+            });
+        }
 
         // Check if it's time to update tiles
         if (time - this.lastTileUpdate >= this.TILE_UPDATE_TIME) {
