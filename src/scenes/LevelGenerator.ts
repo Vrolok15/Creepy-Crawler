@@ -187,20 +187,53 @@ export class LevelGenerator {
     }
 
     private placeEntranceAndExit(): { entranceX: number; entranceY: number; exitX: number; exitY: number } {
-        // Sort rooms by depth in BSP tree (first room is deepest)
-        const sortedRooms = [...this.rooms].sort((a, b) => {
-            const depthA = Math.min(a.x + a.width, a.y + a.height);
-            const depthB = Math.min(b.x + b.width, b.y + b.height);
-            return depthA - depthB;
-        });
+        // Calculate minimum distance (half the map size)
+        const minDistance = Math.floor(this.config.gridSize / 2);
 
-        // Place entrance in first room
-        const entranceRoom = sortedRooms[0];
+        // Shuffle rooms to randomize selection
+        const shuffledRooms = [...this.rooms].sort(() => Math.random() - 0.5);
+
+        // Find suitable rooms for entrance and exit
+        let entranceRoom: Room | null = null;
+        let exitRoom: Room | null = null;
+
+        // Helper function to calculate distance between room centers
+        const getRoomDistance = (room1: Room, room2: Room): number => {
+            const center1 = {
+                x: room1.x + Math.floor(room1.width / 2),
+                y: room1.y + Math.floor(room1.height / 2)
+            };
+            const center2 = {
+                x: room2.x + Math.floor(room2.width / 2),
+                y: room2.y + Math.floor(room2.height / 2)
+            };
+            return Math.abs(center1.x - center2.x) + Math.abs(center1.y - center2.y);
+        };
+
+        // Try to find suitable rooms
+        for (let i = 0; i < shuffledRooms.length; i++) {
+            for (let j = i + 1; j < shuffledRooms.length; j++) {
+                const distance = getRoomDistance(shuffledRooms[i], shuffledRooms[j]);
+                if (distance >= minDistance) {
+                    entranceRoom = shuffledRooms[i];
+                    exitRoom = shuffledRooms[j];
+                    break;
+                }
+            }
+            if (entranceRoom && exitRoom) break;
+        }
+
+        // If no suitable rooms found, use first and last rooms
+        if (!entranceRoom || !exitRoom) {
+            entranceRoom = shuffledRooms[0];
+            exitRoom = shuffledRooms[shuffledRooms.length - 1];
+        }
+
+        // Place entrance in entrance room
         const entranceX = entranceRoom.x + Math.floor(Math.random() * entranceRoom.width);
         const entranceY = entranceRoom.y + Math.floor(Math.random() * entranceRoom.height);
 
-        // Place exit in last room, ensuring it's not on a wall
-        const exitRoom = sortedRooms[sortedRooms.length - 1];
+        // Place exit in exit room
         let exitX: number;
         let exitY: number;
         do {
