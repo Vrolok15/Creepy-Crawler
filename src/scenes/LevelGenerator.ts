@@ -310,9 +310,8 @@ export class LevelGenerator {
                 let wallCount = 0;
                 for (const point of path) {
                     if (this.grid[point.y][point.x]) wallCount++;
-                    this.grid[point.y][point.x] = false;
                 }
-                console.log(`Path found! Length: ${path.length}, Walls converted: ${wallCount}`);
+                console.log(`Path found! Length: ${path.length}, Walls to convert: ${wallCount}`);
                 return path;
             }
 

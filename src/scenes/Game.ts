@@ -45,8 +45,10 @@ export class Game extends Scene {
     private roomTiles: boolean[][] = []; // Tracks which tiles are part of rooms
     private roomConnections: Set<string> = new Set(); // Tracks which rooms are connected
     private paths: Map<string, Point[]> = new Map(); // Tracks all paths between rooms
-    private readonly ROOM_CONNECTION_CHECK_TIME = 5000; // Check every 10 seconds
-    private lastRoomConnectionCheck: number = 0;
+    private wallsToAdd: Point[] = []; // Queue of walls to add
+    private wallsToRemove: Point[] = []; // Queue of walls to remove
+    private lastWallUpdate: number = 0; // Last time we processed wall changes
+    private readonly WALL_UPDATE_INTERVAL = 100; // Process one wall change every 100ms
     private levelGenerator!: LevelGenerator; // Store the generator for later use
 
     constructor() {
@@ -181,12 +183,18 @@ export class Game extends Scene {
     }
 
     private removeAllConnections(): void {
-        // Restore walls for all paths, but only for tiles that weren't part of rooms
+        console.log('[Grid Debug] Starting removeAllConnections');
+        // Clear both queues first
+        this.wallsToAdd = [];
+        this.wallsToRemove = [];
+        
+        // Add all path tiles to wallsToAdd queue, but only for tiles that weren't part of rooms
         for (const path of this.paths.values()) {
             for (const point of path) {
-                // Only restore wall if this tile wasn't part of a room originally
+                // Only add to queue if this tile wasn't part of a room originally
                 if (!this.roomTiles[point.y][point.x]) {
-                    this.grid[point.y][point.x] = true;
+                    console.log(`[Grid Debug] Queuing wall addition at (${point.x}, ${point.y})`);
+                    this.wallsToAdd.push(point);
                 }
             }
         }
@@ -195,21 +203,14 @@ export class Game extends Scene {
         this.roomConnections.clear();
         this.paths.clear();
         
-        // Redraw the grid
-        this.redrawTile(0, 0);
-        
-        console.log('Removed all connections');
+        console.log('[Queue] Queued all connections for removal');
     }
 
     private connectRooms(room1: Room, room2: Room): void {
-        console.log(`\nConnecting rooms:`);
-        console.log(`Room 1: (${room1.x},${room1.y}) ${room1.width}x${room1.height}`);
-        console.log(`Room 2: (${room2.x},${room2.y}) ${room2.width}x${room2.height}`);
-        
+        console.log(`[Grid Debug] Starting connectRooms between rooms ${this.rooms.indexOf(room1)} and ${this.rooms.indexOf(room2)}`);
         const path = this.levelGenerator.connectRooms(room1, room2);
         
         if (path.length > 0) {
-            console.log(`Successfully created corridor with ${path.length} points`);
             const connectionKey = this.getRoomConnectionKey(room1, room2);
             
             // Mark rooms as connected
@@ -218,24 +219,47 @@ export class Game extends Scene {
             // Store the path
             this.paths.set(connectionKey, path);
             
-            // Update our grid with the changes from LevelGenerator
-            this.grid = this.levelGenerator.getGrid();
-            
-            // Log grid changes
-            let wallCount = 0;
-            let floorCount = 0;
-            for (let y = 0; y < this.GRID_SIZE; y++) {
-                for (let x = 0; x < this.GRID_SIZE; x++) {
-                    if (this.grid[y][x]) wallCount++;
-                    else floorCount++;
+            // Add path tiles to wallsToRemove queue without modifying the grid
+            for (const point of path) {
+                // Only add to queue if this tile wasn't part of a room originally
+                if (!this.roomTiles[point.y][point.x]) {
+                    this.wallsToRemove.push(point);
+                    console.log(`[Grid Debug] Queued wall removal at (${point.x}, ${point.y}) - Current state: ${this.grid[point.y][point.x]}`);
                 }
             }
-            console.log(`Grid updated: ${wallCount} walls, ${floorCount} floor tiles`);
             
-            // Redraw the grid to show the new corridor
+            console.log(`[Queue] Added ${path.length} walls to removal queue for path between rooms ${this.rooms.indexOf(room1)} and ${this.rooms.indexOf(room2)}`);
+        }
+    }
+
+    private processWallChanges(time: number): void {
+        if (time - this.lastWallUpdate < this.WALL_UPDATE_INTERVAL) {
+            return;
+        }
+        this.lastWallUpdate = time;
+
+        // Process one wall to add
+        if (this.wallsToAdd.length > 0) {
+            const point = this.wallsToAdd.shift()!;
+            console.log(`[Grid Debug] Before adding wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
+            this.grid[point.y][point.x] = true;
+            console.log(`[Grid Debug] After adding wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
+            console.log(`[Wall Change] Added wall at (${point.x}, ${point.y})`);
+        }
+
+        // Process one wall to remove
+        if (this.wallsToRemove.length > 0) {
+            const point = this.wallsToRemove.shift()!;
+            console.log(`[Grid Debug] Before removing wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
+            this.grid[point.y][point.x] = false;
+            console.log(`[Grid Debug] After removing wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
+            console.log(`[Wall Change] Removed wall at (${point.x}, ${point.y})`);
+        }
+
+        // Log queue statistics if there are any changes
+        if (this.wallsToAdd.length > 0 || this.wallsToRemove.length > 0) {
+            console.log(`[Queue Stats] Walls to add: ${this.wallsToAdd.length}, Walls to remove: ${this.wallsToRemove.length}`);
             this.redrawTile(0, 0);
-        } else {
-            console.log('Failed to create corridor - no path found');
         }
     }
 
@@ -251,13 +275,8 @@ export class Game extends Scene {
     }
 
     private connectUnconnectedRooms(): void {
-        console.log('\nAttempting to connect unconnected rooms:');
-        console.log(`Total rooms: ${this.rooms.length}`);
-        console.log(`Current connections: ${this.roomConnections.size}`);
-        
         // Keep track of rooms with 0 connections
         const unconnectedRooms = this.rooms.filter(room => this.getRoomConnectionCount(room) === 0);
-        console.log(`Rooms with 0 connections: ${unconnectedRooms.length}`);
         
         while (unconnectedRooms.length > 0) {
             // Get a random room with 0 connections
@@ -279,10 +298,6 @@ export class Game extends Scene {
             
             // Get a random room2 from potential candidates
             const room2 = potentialRoom2s[Math.floor(Math.random() * potentialRoom2s.length)];
-            
-            console.log(`Attempting to connect rooms:`);
-            console.log(`Room 1: (${room1.x},${room1.y}) ${room1.width}x${room1.height}`);
-            console.log(`Room 2: (${room2.x},${room2.y}) ${room2.width}x${room2.height}`);
             
             this.connectRooms(room1, room2);
             
@@ -310,6 +325,7 @@ export class Game extends Scene {
             splitRandomness: 0.25
         });
         const levelData = levelGenerator.generateLevel();
+        console.log('[Grid Debug] Initial grid state from level generator');
         this.grid = levelData.grid;
         this.exitX = levelData.exitX;
         this.exitY = levelData.exitY;
@@ -460,6 +476,11 @@ export class Game extends Scene {
             this.physics.world.debugGraphic.setVisible(this.debugMode);
             this.playerGridMarker.setVisible(this.debugMode);
             this.debugText.setText(`Debug Mode: ${this.debugMode ? 'ON' : 'OFF'}`);
+            
+            // Clear visited tiles visualization when debug mode is turned off
+            if (!this.debugMode) {
+                this.debugGraphics.clear();
+            }
         });
     }
 
@@ -482,6 +503,9 @@ export class Game extends Scene {
     }
 
     update(time: number, delta: number) {
+        // Process wall changes
+        this.processWallChanges(time);
+
         // Update player grid marker position
         const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
         const playerGridY = Math.floor(this.player.y / this.CELL_SIZE);
@@ -580,20 +604,20 @@ export class Game extends Scene {
             this.nextLevel();
         }
 
-        // Check if it's time to update connections
-        if (time - this.lastRoomConnectionCheck >= this.ROOM_CONNECTION_CHECK_TIME) {
-            // Remove all existing connections
+        // Check if we need to update layout (when both queues are empty)
+        if (this.wallsToAdd.length === 0 && this.wallsToRemove.length === 0) {
             this.updateLayout();
-            this.lastRoomConnectionCheck = time;
         }
     }
 
     updateLayout(){
+        console.log('[Grid Debug] Starting updateLayout');
         // Remove all existing connections
         this.removeAllConnections();
         
         // Then connect unconnected rooms
         this.connectUnconnectedRooms();
+        console.log('[Grid Debug] Finished updateLayout');
     }
 } 
 
