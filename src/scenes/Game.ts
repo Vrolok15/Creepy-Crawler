@@ -41,6 +41,9 @@ export class Game extends Scene {
     private debugGraphics!: Phaser.GameObjects.Graphics;
     private playerGridMarker!: Phaser.GameObjects.Rectangle;
     private playerVisitedTiles: {x: number, y: number}[] = [];
+    private playerBrightLightZone: number = 200;
+    private playerDimLightZone: number = 400;
+    private lastPlayerAngle: number = 0; // Store the last known player direction
     private graphics!: Phaser.GameObjects.Graphics;
     private rooms: Room[] = [];
     private roomTiles: boolean[][] = []; // Tracks which tiles are part of rooms
@@ -51,6 +54,8 @@ export class Game extends Scene {
     private lastWallUpdate: number = 0; // Last time we processed wall changes
     private readonly WALL_UPDATE_INTERVAL = 200; // Process one wall change every 200ms
     private levelGenerator!: LevelGenerator; // Store the generator for later use
+    private lightingMask!: Phaser.GameObjects.Graphics; // For the lighting mask
+    private mask!: Phaser.Display.Masks.BitmapMask; // The actual mask
 
     constructor() {
         super({ key: 'Game' });
@@ -430,6 +435,11 @@ export class Game extends Scene {
         // Create wall group for collisions
         this.wallGroup = this.physics.add.staticGroup();
 
+        // Create lighting mask
+        this.lightingMask = this.add.graphics();
+        this.lightingMask.setDepth(1);
+        this.mask = new Phaser.Display.Masks.BitmapMask(this, this.lightingMask);
+
         // Generate level using LevelGenerator with configuration
         const levelGenerator = new LevelGenerator({
             gridSize: this.GRID_SIZE,
@@ -511,6 +521,11 @@ export class Game extends Scene {
 
         // Add collision between player and walls
         this.physics.add.collider(this.player, this.wallGroup);
+
+        // Apply masks to all objects after player is created
+        this.gridContainer.setMask(this.mask);
+        this.graphics.setMask(this.mask);
+        this.player.setMask(this.mask);
 
         // Set up camera
         this.cameras.main.startFollow(this.player);
@@ -660,6 +675,56 @@ export class Game extends Scene {
     update(time: number, delta: number) {
         // Process wall changes
         this.processWallChanges(time);
+
+        // Update lighting mask
+        this.lightingMask.clear();
+        
+        // Calculate player's movement direction
+        const velocity = this.player.body.velocity;
+        let angle = 0;
+        
+        // If player is moving, use velocity to determine angle
+        if (velocity.x !== 0 || velocity.y !== 0) {
+            angle = Math.atan2(velocity.y, velocity.x);
+        } else {
+            // If not moving, use the last known angle or default to right
+            angle = this.lastPlayerAngle || 0;
+        }
+        this.lastPlayerAngle = angle;
+
+        // Convert angle to degrees and calculate cone angles
+        const angleDeg = Phaser.Math.RadToDeg(angle);
+        const coneAngle = 120; // 120 degree cone
+        const startAngle = angleDeg - coneAngle / 2;
+        const endAngle = angleDeg + coneAngle / 2;
+
+        // Draw bright center
+        this.lightingMask.fillStyle(0xFFFFFF, 0.5);
+        this.lightingMask.beginPath();
+        this.lightingMask.moveTo(this.player.x, this.player.y);
+        this.lightingMask.arc(
+            this.player.x,
+            this.player.y,
+            this.playerBrightLightZone,
+            Phaser.Math.DegToRad(startAngle),
+            Phaser.Math.DegToRad(endAngle)
+        );
+        this.lightingMask.closePath();
+        this.lightingMask.fill();
+
+        // Draw dim transition
+        this.lightingMask.fillStyle(0xFFFFFF, 0.2);
+        this.lightingMask.beginPath();
+        this.lightingMask.moveTo(this.player.x, this.player.y);
+        this.lightingMask.arc(
+            this.player.x,
+            this.player.y,
+            this.playerDimLightZone,
+            Phaser.Math.DegToRad(startAngle),
+            Phaser.Math.DegToRad(endAngle)
+        );
+        this.lightingMask.closePath();
+        this.lightingMask.fill();
 
         // Update player grid marker position
         const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
