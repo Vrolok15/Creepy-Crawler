@@ -58,6 +58,9 @@ export class Game extends Scene {
     private lightingMask!: Phaser.GameObjects.Graphics; // For the lighting mask
     private mask!: Phaser.Display.Masks.BitmapMask; // The actual mask
 
+    private stair_up_sprite!: Phaser.GameObjects.Sprite;
+    private stair_down_sprite!: Phaser.GameObjects.Sprite;
+
     private player_down_idle!: Phaser.GameObjects.Sprite;
     private player_down_walk1!: Phaser.GameObjects.Sprite;
     private player_down_walk2!: Phaser.GameObjects.Sprite;
@@ -425,6 +428,8 @@ export class Game extends Scene {
 
     preload() {
         // Load player sprites
+        this.load.image('stair_up', 'assets/sprites/stair_up.png');
+        this.load.image('stair_down', 'assets/sprites/stair_down.png');
         this.load.image('player_down_idle', 'assets/sprites/brother_stand_down.png');
         this.load.image('player_down_walk1', 'assets/sprites/brother_walk_down_1.png');
         this.load.image('player_down_walk2', 'assets/sprites/brother_walk_down_2.png');
@@ -485,23 +490,15 @@ export class Game extends Scene {
         this.gridContainer = this.add.container(0, 0);
 
         // Create entrance and exit markers
-        const entranceMarker = this.add.rectangle(
-            levelData.entranceX * this.CELL_SIZE + this.CELL_SIZE / 2,
-            levelData.entranceY * this.CELL_SIZE + this.CELL_SIZE / 2,
-            this.CELL_SIZE * 0.8,
-            this.CELL_SIZE * 0.8,
-            0xff0000
-        );
-        this.gridContainer.add(entranceMarker);
+        var stair_up = this.add.sprite(levelData.entranceX * this.CELL_SIZE + this.CELL_SIZE / 2, levelData.entranceY * this.CELL_SIZE + this.CELL_SIZE / 2, 'stair_up');
+        stair_up.setDepth(1);
+        stair_up.setScale(2);
+        this.gridContainer.add(stair_up);
 
-        const exitMarker = this.add.rectangle(
-            this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2,
-            this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2,
-            this.CELL_SIZE * 0.8,
-            this.CELL_SIZE * 0.8,
-            0x00ff00
-        );
-        this.gridContainer.add(exitMarker);
+        var stair_down = this.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'stair_down');
+        stair_down.setDepth(1);
+        stair_down.setScale(2);
+        this.gridContainer.add(stair_down);
 
         // Draw initial grid and create initial colliders
         this.redrawTile(0, 0);
