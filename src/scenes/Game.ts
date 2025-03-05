@@ -21,7 +21,7 @@ interface Point {
 
 export class Game extends Scene {
     private grid: boolean[][] = [];
-    private readonly GRID_SIZE = 50;
+    private readonly GRID_SIZE = 30;
     private readonly CELL_SIZE = 32;
     private player!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
     private playerSprite!: Phaser.GameObjects.Sprite;
@@ -76,6 +76,16 @@ export class Game extends Scene {
     private frameTime: number = 0;
     private frameDuration: number = 150; // Adjust this to control animation speed (in milliseconds)
     private currentFrame: number = 0; // 0 or 1 for alternating frames
+
+    private isTransitioning: boolean = false;
+    private isGeneratingLevel: boolean = false;
+    private exitSequenceInProgress: boolean = false;
+    private transitionDuration: number = 2500; // 2.5 seconds for full transition
+    private transitionPromise: Promise<void> | null = null;
+
+    private readonly TRANSITION_DURATION = 2500; // 2500 second transition
+    private readonly CAMERA_ZOOM_FACTOR = 1.5; // Less extreme zoom
+    private readonly FADE_OUT_ALPHA = 0.8; // Not completely invisible
 
     constructor() {
         super({ key: 'Game' });
@@ -670,16 +680,207 @@ export class Game extends Scene {
         this.rooms = [];
         this.roomTiles = [];
         
+        // Reset all transition and exit states
+        this.isTransitioning = false;
+        this.isGeneratingLevel = false;
+        this.exitSequenceInProgress = false;
+        this.transitionPromise = null;
+        
         // Restart the scene to generate a new level
         this.scene.restart();
     }
 
+    private async playExitTransition(): Promise<void> {
+        if (this.transitionPromise) {
+            return this.transitionPromise;
+        }
+
+        this.transitionPromise = new Promise<void>((resolve, reject) => {
+            try {
+                this.isTransitioning = true;
+                console.log('Exit transition started');
+
+                // Center player on exit tile
+                const exitCenterX = this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2;
+                const exitCenterY = this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2;
+                
+                // Create temporary stairs down sprite under player
+                const tempStairs = this.add.sprite(exitCenterX, exitCenterY, 'stair_down');
+                tempStairs.setDepth(0); // Place it under the player
+                tempStairs.setScale(2);
+                tempStairs.clearMask(); // Remove light mask
+                
+                // Stop any current movement and set small rightward velocity
+                this.player.setVelocity(20, 0); // Small constant rightward velocity
+                this.isMoving = true;
+                this.lastDirection = 'right';
+                
+                // Move player to exit center
+                this.player.setPosition(exitCenterX, exitCenterY);
+                this.playerSprite.setPosition(exitCenterX, exitCenterY);
+
+                let completedAnimations = 0;
+                const totalAnimations = 3;
+                const startTime = Date.now();
+
+                const checkComplete = () => {
+                    completedAnimations++;
+                    const elapsed = Date.now() - startTime;
+                    console.log(`Animation completed: ${completedAnimations}/${totalAnimations} (${elapsed}ms)`);
+                    
+                    if (completedAnimations >= totalAnimations) {
+                        console.log('All animations completed, cleaning up');
+                        tempStairs.destroy(); // Clean up the temporary stairs
+                        resolve();
+                    }
+                };
+
+                // Store initial camera position relative to player
+                const initialCameraOffset = {
+                    x: this.cameras.main.scrollX - this.player.x,
+                    y: this.cameras.main.scrollY - this.player.y
+                };
+
+                // Camera zoom and follow
+                this.tweens.add({
+                    targets: this.cameras.main,
+                    zoom: this.cameras.main.zoom * this.CAMERA_ZOOM_FACTOR,
+                    duration: this.TRANSITION_DURATION,
+                    ease: 'Quad.InOut',
+                    onUpdate: () => {
+                        // Keep camera centered on player during zoom
+                        this.cameras.main.scrollX = this.player.x + initialCameraOffset.x;
+                        this.cameras.main.scrollY = this.player.y + initialCameraOffset.y;
+                    },
+                    onComplete: checkComplete
+                });
+
+                // Light shrink with slight fade
+                this.tweens.add({
+                    targets: this,
+                    playerBrightLightZone: 0,
+                    playerDimLightZone: 0,
+                    duration: this.TRANSITION_DURATION,
+                    ease: 'Linear',
+                    onComplete: checkComplete
+                });
+
+                // Player dissolve effect
+                this.tweens.add({
+                    targets: this.playerSprite,
+                    scale: 0,
+                    duration: this.TRANSITION_DURATION,
+                    ease: 'Linear',
+                    onComplete: checkComplete
+                });
+
+            } catch (error) {
+                reject(error);
+            }
+        });
+
+        try {
+            await this.transitionPromise;
+            console.log('Transition promise resolved');
+        } finally {
+            this.isTransitioning = false;
+            this.transitionPromise = null;
+        }
+    }
+
+    private async handleExit() {
+        // Prevent multiple exit sequences
+        if (this.exitSequenceInProgress || this.isTransitioning || this.isGeneratingLevel) {
+            console.log('Exit sequence blocked:', {
+                exitSequenceInProgress: this.exitSequenceInProgress,
+                isTransitioning: this.isTransitioning,
+                isGeneratingLevel: this.isGeneratingLevel
+            });
+            return;
+        }
+
+        const isAtExit = this.checkExitReached();
+        console.log('Checking exit:', { 
+            isAtExit,
+            isTransitioning: this.isTransitioning,
+            isGeneratingLevel: this.isGeneratingLevel,
+            exitSequenceInProgress: this.exitSequenceInProgress
+        });
+
+        if (isAtExit) {
+            try {
+                // Set all state flags at once to prevent race conditions
+                this.exitSequenceInProgress = true;
+                this.isTransitioning = true;
+                this.isGeneratingLevel = true;
+                
+                console.log('Starting exit sequence');
+
+                await this.playExitTransition();
+                console.log('Transition animations completed');
+
+                await this.nextLevel();
+                console.log('New level generated');
+
+                await this.resetPlayerAndStates();
+                console.log('States reset completed');
+
+            } catch (error) {
+                console.error('Error during exit sequence:', error);
+            } finally {
+                // Reset all state flags
+                this.isTransitioning = false;
+                this.isGeneratingLevel = false;
+                this.exitSequenceInProgress = false;
+                this.transitionPromise = null;
+                console.log('Exit sequence cleanup completed');
+            }
+        }
+    }
+
+    private async resetPlayerAndStates(): Promise<void> {
+        return new Promise<void>((resolve) => {
+            // Fade in effect for new level
+            this.cameras.main.fadeIn(500, 0, 0, 0);
+            
+            // Reset camera with smooth transition
+            this.tweens.add({
+                targets: this.cameras.main,
+                zoom: 1,
+                duration: 500,
+                ease: 'Quad.Out'
+            });
+            
+            // Reset light with smooth transition
+            this.tweens.add({
+                targets: this.lightingMask,
+                radius: this.playerBrightLightZone,
+                alpha: 1,
+                duration: 500,
+                ease: 'Quad.Out'
+            });
+            
+            // Reset player position
+            this.player.setPosition(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2);
+            this.playerSprite.setPosition(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2);
+            
+            // Wait for transitions to complete
+            this.time.delayedCall(500, () => {
+                console.log('State reset completed');
+                resolve();
+            });
+        });
+    }
+
     update(time: number, delta: number) {
+
         // Process wall changes
         this.processWallChanges(time);
 
         // Update lighting mask
         this.lightingMask.clear();
+        this.playerBrightLightZone = 400;
+        this.playerDimLightZone = 200;
         
         // Calculate player's movement direction
         const velocity = this.player.body.velocity;
@@ -701,7 +902,7 @@ export class Game extends Scene {
         const endAngle = angleDeg + coneAngle / 2;
 
         // Draw bright center
-        this.lightingMask.fillStyle(0xFFFFFF, 0.5);
+        this.lightingMask.fillStyle(0xFFFFFF, 0.4);
         this.lightingMask.beginPath();
         this.lightingMask.moveTo(this.player.x, this.player.y);
         this.lightingMask.arc(
@@ -715,7 +916,7 @@ export class Game extends Scene {
         this.lightingMask.fill();
 
         // Draw dim transition
-        this.lightingMask.fillStyle(0xFFFFFF, 0.2);
+        this.lightingMask.fillStyle(0xFFFFFF, 0.1);
         this.lightingMask.beginPath();
         this.lightingMask.moveTo(this.player.x, this.player.y);
         this.lightingMask.arc(
@@ -727,6 +928,28 @@ export class Game extends Scene {
         );
         this.lightingMask.closePath();
         this.lightingMask.fill();
+
+        this.lightingMask.fillStyle(0xFFFFFF, 0.1);
+        this.lightingMask.beginPath();
+        this.lightingMask.moveTo(this.player.x, this.player.y);
+        this.lightingMask.arc(
+            this.player.x,
+            this.player.y,
+            this.playerBrightLightZone / 10,
+            0,
+            Phaser.Math.DegToRad(360)
+        );
+        this.lightingMask.closePath();
+        this.lightingMask.fill();
+
+        if (this.isTransitioning) {
+            this.playerSprite.setPosition(this.player.x, this.player.y);
+            const frame = this.currentFrame % 2 + 1;
+            this.playerSprite.setTexture(`player_left_walk${frame}`);
+            
+            // Skip regular updates during transition
+            return;
+        }
 
         // Update player grid marker position
         const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
@@ -825,10 +1048,8 @@ export class Game extends Scene {
             this.playerSprite.setPosition(this.player.x, this.player.y);
         }
 
-        // Check if player reached the exit
-        if (this.checkExitReached()) {
-            this.nextLevel();
-        }
+        // Check for exit condition
+        this.handleExit();
 
         if(this.wallsToAdd.length === 0 && this.wallsToRemove.length < 50){
             this.removeSomeConnections();
@@ -914,6 +1135,14 @@ export class Game extends Scene {
                     break;
             }
         }
+    }
+
+    // Add cleanup method for scene shutdown
+    shutdown() {
+        this.isTransitioning = false;
+        this.isGeneratingLevel = false;
+        this.exitSequenceInProgress = false;
+        this.transitionPromise = null;
     }
 } 
 
