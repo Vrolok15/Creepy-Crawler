@@ -69,6 +69,11 @@ export class Game extends Scene {
     private player_up_walk2!: Phaser.GameObjects.Sprite;
     private player_death!: Phaser.GameObjects.Sprite;
 
+    private lastDirection: 'up' | 'down' | 'left' | 'right' = 'down';
+    private frameTime: number = 0;
+    private frameDuration: number = 150; // Adjust this to control animation speed (in milliseconds)
+    private currentFrame: number = 0; // 0 or 1 for alternating frames
+
     constructor() {
         super({ key: 'Game' });
     }
@@ -834,7 +839,84 @@ export class Game extends Scene {
         if (this.wallsToRemove.length === 0) {
             this.connectUnconnectedRooms();
         }
+
+        this.updatePlayerAnimation(time);
     }
 
+    updatePlayerAnimation(time: number) {
+        if (!this.player?.body || !this.playerSprite) return;
+
+        const velocity = this.player.body.velocity;
+        const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
+        
+        // Update movement state
+        this.isMoving = speed > 0;
+
+        // Determine direction based on velocity
+        if (Math.abs(velocity.x) > Math.abs(velocity.y)) {
+            // Horizontal movement dominates
+            if (velocity.x > 0) {
+                this.lastDirection = 'right';
+            } else if (velocity.x < 0) {
+                this.lastDirection = 'left';
+            }
+        } else if (Math.abs(velocity.y) > 0) {
+            // Vertical movement dominates
+            if (velocity.y > 0) {
+                this.lastDirection = 'down';
+            } else {
+                this.lastDirection = 'up';
+            }
+        }
+
+        // Update frame time and alternate frames if moving
+        if (this.isMoving) {
+            if (time > this.frameTime) {
+                this.currentFrame = this.currentFrame === 0 ? 1 : 0;
+                this.frameTime = time + this.frameDuration;
+            }
+
+            // Set the appropriate texture based on direction and current frame
+            const frame = this.currentFrame + 1; // Convert 0/1 to 1/2 for texture names
+            switch (this.lastDirection) {
+                case 'down':
+                    this.playerSprite.setTexture(`player_down_walk${frame}`);
+                    this.playerSprite.setFlipX(false);
+                    break;
+                case 'up':
+                    this.playerSprite.setTexture(`player_up_walk${frame}`);
+                    this.playerSprite.setFlipX(false);
+                    break;
+                case 'left':
+                    this.playerSprite.setTexture(`player_left_walk${frame}`);
+                    this.playerSprite.setFlipX(false);
+                    break;
+                case 'right':
+                    this.playerSprite.setTexture(`player_left_walk${frame}`);
+                    this.playerSprite.setFlipX(true);
+                    break;
+            }
+        } else {
+            // Set idle texture
+            switch (this.lastDirection) {
+                case 'down':
+                    this.playerSprite.setTexture('player_down_idle');
+                    this.playerSprite.setFlipX(false);
+                    break;
+                case 'up':
+                    this.playerSprite.setTexture('player_up_idle');
+                    this.playerSprite.setFlipX(false);
+                    break;
+                case 'left':
+                    this.playerSprite.setTexture('player_left_idle');
+                    this.playerSprite.setFlipX(false);
+                    break;
+                case 'right':
+                    this.playerSprite.setTexture('player_left_idle');
+                    this.playerSprite.setFlipX(true);
+                    break;
+            }
+        }
+    }
 } 
 
