@@ -199,10 +199,17 @@ export class LevelGenerator {
         const entranceX = entranceRoom.x + Math.floor(Math.random() * entranceRoom.width);
         const entranceY = entranceRoom.y + Math.floor(Math.random() * entranceRoom.height);
 
-        // Place exit in last room
+        // Place exit in last room, ensuring it's not on a wall
         const exitRoom = sortedRooms[sortedRooms.length - 1];
-        const exitX = exitRoom.x + Math.floor(Math.random() * exitRoom.width);
-        const exitY = exitRoom.y + Math.floor(Math.random() * exitRoom.height);
+        let exitX: number;
+        let exitY: number;
+        do {
+            exitX = exitRoom.x + Math.floor(Math.random() * exitRoom.width);
+            exitY = exitRoom.y + Math.floor(Math.random() * exitRoom.height);
+        } while (this.grid[exitY][exitX]); // Keep trying until we find a non-wall position
+
+        // Ensure the exit position is marked as floor
+        this.grid[exitY][exitX] = false;
 
         return { entranceX, entranceY, exitX, exitY };
     }

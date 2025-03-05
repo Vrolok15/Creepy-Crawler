@@ -34,6 +34,7 @@ export class Game extends Scene {
     private levelText!: Phaser.GameObjects.Text;
     private exitX: number = 0;
     private exitY: number = 0;
+    private exitPoint: Point = { x: 0, y: 0 }; // Track exit position
     private wallGroup!: Phaser.Physics.Arcade.StaticGroup;
     private debugMode: boolean = false;
     private debugText!: Phaser.GameObjects.Text;
@@ -50,6 +51,7 @@ export class Game extends Scene {
     private lastWallUpdate: number = 0; // Last time we processed wall changes
     private readonly WALL_UPDATE_INTERVAL = 100; // Process one wall change every 100ms
     private levelGenerator!: LevelGenerator; // Store the generator for later use
+    private firstConnection: boolean = true;
 
     constructor() {
         super({ key: 'Game' });
@@ -241,10 +243,15 @@ export class Game extends Scene {
         // Process one wall to add
         if (this.wallsToAdd.length > 0) {
             const point = this.wallsToAdd.shift()!;
-            console.log(`[Grid Debug] Before adding wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
-            this.grid[point.y][point.x] = true;
-            console.log(`[Grid Debug] After adding wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
-            console.log(`[Wall Change] Added wall at (${point.x}, ${point.y})`);
+            // Don't add wall if it's the exit position
+            if (point.x !== this.exitPoint.x || point.y !== this.exitPoint.y) {
+                console.log(`[Grid Debug] Before adding wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
+                this.grid[point.y][point.x] = true;
+                console.log(`[Grid Debug] After adding wall at (${point.x}, ${point.y}): ${this.grid[point.y][point.x]}`);
+                console.log(`[Wall Change] Added wall at (${point.x}, ${point.y})`);
+            } else {
+                console.log(`[Wall Change] Skipped adding wall at exit position (${point.x}, ${point.y})`);
+            }
         }
 
         // Process one wall to remove
@@ -329,6 +336,7 @@ export class Game extends Scene {
         this.grid = levelData.grid;
         this.exitX = levelData.exitX;
         this.exitY = levelData.exitY;
+        this.exitPoint = { x: this.exitX, y: this.exitY }; // Store exit position
         this.rooms = levelData.rooms;
         this.levelGenerator = levelGenerator; // Store the generator for later use
 
