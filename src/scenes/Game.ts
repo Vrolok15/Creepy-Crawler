@@ -879,8 +879,10 @@ export class Game extends Scene {
 
         // Update lighting mask
         this.lightingMask.clear();
-        this.playerBrightLightZone = 400;
-        this.playerDimLightZone = 200;
+        if(!this.isTransitioning) {
+            this.playerBrightLightZone = 400;
+            this.playerDimLightZone = 200;
+        }
         
         // Calculate player's movement direction
         const velocity = this.player.body.velocity;
@@ -935,7 +937,7 @@ export class Game extends Scene {
         this.lightingMask.arc(
             this.player.x,
             this.player.y,
-            this.playerBrightLightZone / 10,
+            this.playerBrightLightZone / 15,
             0,
             Phaser.Math.DegToRad(360)
         );
