@@ -21,7 +21,7 @@ interface Point {
 
 export class Game extends Scene {
     private grid: boolean[][] = [];
-    private readonly GRID_SIZE = 30;
+    private readonly GRID_SIZE = 50;
     private readonly CELL_SIZE = 32;
     private player!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
     private playerSprite!: Phaser.GameObjects.Sprite;
@@ -71,6 +71,16 @@ export class Game extends Scene {
     private flashlightMaxDistance: number = 400;
     private flashlightMinDistance: number = 200;
 
+    private battery_sprite!: Phaser.GameObjects.Sprite;
+    private battery_count: number = 0;
+    private battery_positions: {x: number, y: number}[] = [];
+    private batteries!: Phaser.Physics.Arcade.Group;
+    private batteryCountText!: Phaser.GameObjects.Text;
+    private rechargeTimer: number = 0;
+    private rechargeInterval: number = 2000; // 10 seconds
+    private readonly MAX_BATTERIES_PER_LEVEL = 3;
+    private readonly MIN_BATTERIES_PER_LEVEL = 1;
+
     private isTransitioning: boolean = false;
     private isGeneratingLevel: boolean = false;
     private exitSequenceInProgress: boolean = false;
@@ -84,6 +94,7 @@ export class Game extends Scene {
     private readonly BATTERY_METER_WIDTH = 200;
     private readonly BATTERY_METER_HEIGHT = 30;
     private readonly BATTERY_METER_PADDING = 5;
+    private uiCamera!: Phaser.Cameras.Scene2D.Camera;
 
     constructor() {
         super({ key: 'Game' });
@@ -449,6 +460,8 @@ export class Game extends Scene {
         this.load.image('player_up_walk2', 'assets/sprites/brother_walk_up_2.png');
         this.load.image('player_death', 'assets/sprites/brother_skeleton.png');
         this.load.image('flashlight', 'assets/sprites/flashlight.png');
+        this.load.image('battery', 'assets/sprites/battery.png');
+        this.load.image('battery_ui', 'assets/sprites/battery_ui.png');
     }
 
     create() {
@@ -635,13 +648,33 @@ export class Game extends Scene {
         this.batteryMeterGraphics.setScrollFactor(0);
         this.batteryMeterGraphics.setDepth(1000);
 
+        //Add battery count text and icon
+        this.battery_sprite = this.add.sprite(this.scale.width - 350, this.scale.height - 35, 'battery_ui');
+        this.battery_sprite.setDepth(1000);
+        this.battery_sprite.setScale(2);
+        this.batteryCountText = this.add.text(this.scale.width - 320, this.scale.height - 50, '0', {
+            fontSize: '22px',
+            fontStyle: 'bold',
+            color: '#ffffff',
+            backgroundColor: '#000000',
+            padding: { left: 12, right: 12, top: 6, bottom: 6 }
+        });
+
         // Create a camera for UI elements that doesn't zoom
-        const uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
-        uiCamera.setScroll(0, 0);
-        uiCamera.setZoom(1);  // Keep UI at normal scale
+        this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+        this.uiCamera.setScroll(0, 0);
+        this.uiCamera.setZoom(1);  // Keep UI at normal scale
         
-        // Make UI camera ignore the main camera's settings
-        uiCamera.ignore([this.graphics, this.gridContainer, this.player, this.playerSprite, this.lightingMask, this.debugGraphics, this.physics.world.debugGraphic, this.playerGridMarker]);
+        // Make UI camera ignore game objects - we need to add them individually
+        // since the ignore method expects GameObjects that implement the Layer interface
+        this.uiCamera.ignore(this.graphics);
+        this.uiCamera.ignore(this.gridContainer);
+        this.uiCamera.ignore(this.player);
+        this.uiCamera.ignore(this.playerSprite);
+        this.uiCamera.ignore(this.lightingMask);
+        this.uiCamera.ignore(this.debugGraphics);
+        this.uiCamera.ignore(this.physics.world.debugGraphic);
+        this.uiCamera.ignore(this.playerGridMarker);
         
         // Add battery percentage text
         this.batteryText = this.add.text(
@@ -663,20 +696,40 @@ export class Game extends Scene {
         this.batteryText.setDepth(1000);
 
         // Make main camera ignore UI elements
-        this.cameras.main.ignore([this.batteryMeterGraphics, this.batteryText, this.flashlight_sprite]);
+        this.cameras.main.ignore([this.batteryMeterGraphics, this.batteryText, this.flashlight_sprite, this.battery_sprite, this.batteryCountText]);
 
         // Update the battery meter position based on game size
         const resize = () => {
             const width = this.scale.width;
             const height = this.scale.height;
             // Update UI camera viewport
-            uiCamera.setViewport(0, 0, width, height);
+            this.uiCamera.setViewport(0, 0, width, height);
             this.updateBatteryMeter(width, height);
         };
 
         // Call resize initially and on window resize
         this.scale.on('resize', resize);
         resize();
+
+        // Create battery group
+        this.batteries = this.physics.add.group();
+        
+        // After rooms are created and player is positioned
+        this.spawnBatteries();
+        
+        // Make sure batteries are ignored by UI camera but affected by the mask
+        this.batteries.getChildren().forEach(battery => {
+            this.uiCamera.ignore(battery);
+        });
+        
+        // Add collision between player and batteries
+        this.physics.add.overlap(
+            this.player, 
+            this.batteries, 
+            this.handleBatteryCollection as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback, 
+            undefined, 
+            this
+        );
     }
 
     private updateTargetPosition(pointer: Phaser.Input.Pointer) {
@@ -737,6 +790,9 @@ export class Game extends Scene {
         this.isGeneratingLevel = false;
         this.exitSequenceInProgress = false;
         this.transitionPromise = null;
+        
+        // Reset battery positions but keep the count
+        this.battery_positions = [];
         
         // Restart the scene to generate a new level
         this.scene.restart();
@@ -1049,6 +1105,25 @@ export class Game extends Scene {
             });
         }
 
+        // Handle battery recharge
+        if(!this.isTransitioning && this.input.keyboard && this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.BACKSPACE).isDown && this.battery_count > 0){
+            // Track recharge timer to prevent rapid recharges
+            this.rechargeTimer += delta;
+            
+            if (this.rechargeTimer >= this.rechargeInterval) {
+                this.rechargeTimer = 0;
+                this.battery_count -= 1;
+                this.updateBatteriesUI();
+                this.flashlightBattery = 100; // Recharge to full
+                
+                // Show recharge text
+                this.showPlayerEventText('Recharge');
+            }
+        } else {
+            // Reset timer if key is released
+            this.rechargeTimer = this.rechargeInterval;
+        }
+
         // Handle movement
         if (this.isMoving && this.input.activePointer.isDown && this.input.activePointer.button === 0) {
             // Calculate distance to target
@@ -1104,6 +1179,19 @@ export class Game extends Scene {
         }
 
         this.updatePlayerAnimation(time);
+
+        // Update lighting mask
+        if (this.player && this.player.body) {
+            // ... existing lighting code ...
+            
+            // Apply mask to all batteries
+            if (this.mask && this.batteries) {
+                this.batteries.getChildren().forEach(battery => {
+                    // Cast to Sprite which has the setMask method
+                    (battery as Phaser.GameObjects.Sprite).setMask(this.mask);
+                });
+            }
+        }
     }
 
     updatePlayerAnimation(time: number) {
@@ -1230,7 +1318,14 @@ export class Game extends Scene {
         );
     }
 
+    private updateBatteriesUI(){
+        this.battery_sprite.setVisible(this.battery_count > 0);
+        this.batteryCountText.setVisible(this.battery_count > 0);
+        this.batteryCountText.setText(`${this.battery_count}`);
+    }
+
     private updateFlashlight(time: number) {
+        this.updateBatteriesUI();
         if(time - this.flashLightBatteryCycleTimer > this.flashLightBatteryCycle) {
             if (this.flashlightBattery > 0) {
                 this.flashlightBattery -= 1;
@@ -1246,6 +1341,109 @@ export class Game extends Scene {
             this.playerDimLightZone = this.flashlightMaxDistance * (this.flashlightBattery / 100);
             this.playerBrightLightZone = this.flashlightMinDistance * (this.flashlightBattery / 100);
         }
+    }
+
+    private spawnBatteries(): void {
+        // Clear any existing batteries
+        this.batteries.clear(true, true);
+        this.battery_positions = [];
+        
+        // Determine how many batteries to spawn (between MIN and MAX)
+        const batteriesToSpawn = Phaser.Math.Between(
+            this.MIN_BATTERIES_PER_LEVEL, 
+            this.MAX_BATTERIES_PER_LEVEL
+        );
+        
+        console.log(`Spawning ${batteriesToSpawn} batteries`);
+        
+        // Get a shuffled copy of the rooms array to randomize placement
+        const shuffledRooms = [...this.rooms].sort(() => Math.random() - 0.5);
+        
+        // Spawn batteries in different rooms
+        for (let i = 0; i < batteriesToSpawn && i < shuffledRooms.length; i++) {
+            const room = shuffledRooms[i];
+            
+            // Find a random position within the room (not too close to edges)
+            const padding = 1; // Cells from the edge
+            const x = Phaser.Math.Between(
+                room.x + padding, 
+                room.x + room.width - padding
+            ) * this.CELL_SIZE + this.CELL_SIZE / 2;
+            
+            const y = Phaser.Math.Between(
+                room.y + padding, 
+                room.y + room.height - padding
+            ) * this.CELL_SIZE + this.CELL_SIZE / 2;
+            
+            // Create battery sprite
+            const battery = this.batteries.create(x, y, 'battery') as Phaser.GameObjects.Sprite;
+            battery.setDepth(5); // Above floor, below player
+            
+            // Apply the lighting mask to the battery
+            if (this.mask) {
+                battery.setMask(this.mask);
+            }
+            
+            // Add a small bobbing animation
+            this.tweens.add({
+                targets: battery,
+                y: y - 5,
+                duration: 1500,
+                yoyo: true,
+                repeat: -1,
+                ease: 'Sine.easeInOut'
+            });
+            
+            // Store the position for debugging
+            this.battery_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
+        }
+    }
+    
+    private showPlayerEventText(message: string, color: string = '#ffff00'): void {
+        // Use player position for the text
+        const x = this.player.x;
+        const y = this.player.y - 20;
+        
+        // Create text with specified message and color
+        const eventText = this.add.text(x, y, message, {
+            fontSize: '16px',
+            color: color,
+            stroke: '#000000',
+            strokeThickness: 3
+        });
+        eventText.setDepth(100);
+        this.uiCamera.ignore(eventText);
+        
+        // Animate the text upward and fade out
+        this.tweens.add({
+            targets: eventText,
+            y: y - 50,
+            alpha: 0,
+            duration: 1000,
+            onComplete: () => {
+                eventText.destroy();
+            }
+        });
+    }
+    
+    private handleBatteryCollection(
+        _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
+        obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
+    ): void {
+        // Use the player reference directly
+        const player = this.player;
+        
+        // Remove the battery from the scene (obj2 is the battery)
+        obj2.destroy();
+        
+        // Increment battery count
+        this.battery_count++;
+        
+        console.log(`Battery collected! Total: ${this.battery_count}`);
+        this.updateBatteriesUI();
+        
+        // Show pickup text
+        this.showPlayerEventText('+1 Battery');
     }
 
     // Add cleanup method for scene shutdown
