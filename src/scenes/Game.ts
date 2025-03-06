@@ -704,12 +704,6 @@ export class Game extends Scene {
                 const exitCenterX = this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2;
                 const exitCenterY = this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2;
                 
-                // Create temporary stairs down sprite under player
-                const tempStairs = this.add.sprite(exitCenterX, exitCenterY, 'stair_down');
-                tempStairs.setDepth(0); // Place it under the player
-                tempStairs.setScale(2);
-                tempStairs.clearMask(); // Remove light mask
-                
                 // Stop any current movement and set small rightward velocity
                 this.player.setVelocity(20, 0); // Small constant rightward velocity
                 this.isMoving = true;
@@ -730,7 +724,6 @@ export class Game extends Scene {
                     
                     if (completedAnimations >= totalAnimations) {
                         console.log('All animations completed, cleaning up');
-                        tempStairs.destroy(); // Clean up the temporary stairs
                         resolve();
                     }
                 };
