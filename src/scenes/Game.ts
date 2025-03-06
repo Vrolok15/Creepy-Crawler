@@ -58,34 +58,32 @@ export class Game extends Scene {
     private lightingMask!: Phaser.GameObjects.Graphics; // For the lighting mask
     private mask!: Phaser.Display.Masks.BitmapMask; // The actual mask
 
-    private stair_up_sprite!: Phaser.GameObjects.Sprite;
-    private stair_down_sprite!: Phaser.GameObjects.Sprite;
-
-    private player_down_idle!: Phaser.GameObjects.Sprite;
-    private player_down_walk1!: Phaser.GameObjects.Sprite;
-    private player_down_walk2!: Phaser.GameObjects.Sprite;
-    private player_left_idle!: Phaser.GameObjects.Sprite;
-    private player_left_walk1!: Phaser.GameObjects.Sprite;
-    private player_left_walk2!: Phaser.GameObjects.Sprite;
-    private player_up_idle!: Phaser.GameObjects.Sprite;
-    private player_up_walk1!: Phaser.GameObjects.Sprite;
-    private player_up_walk2!: Phaser.GameObjects.Sprite;
-    private player_death!: Phaser.GameObjects.Sprite;
-
     private lastDirection: 'up' | 'down' | 'left' | 'right' = 'down';
     private frameTime: number = 0;
     private frameDuration: number = 150; // Adjust this to control animation speed (in milliseconds)
     private currentFrame: number = 0; // 0 or 1 for alternating frames
 
+    //gameplay variables
+    private flashlight_sprite!: Phaser.GameObjects.Sprite;
+    private flashlightBattery: number = 100;
+    private flashLightBatteryCycle: number = 3000; // 3 seconds
+    private flashLightBatteryCycleTimer: number = 0;
+    private flashlightMaxDistance: number = 400;
+    private flashlightMinDistance: number = 200;
+
     private isTransitioning: boolean = false;
     private isGeneratingLevel: boolean = false;
     private exitSequenceInProgress: boolean = false;
-    private transitionDuration: number = 2500; // 2.5 seconds for full transition
     private transitionPromise: Promise<void> | null = null;
 
     private readonly TRANSITION_DURATION = 2500; // 2500 second transition
     private readonly CAMERA_ZOOM_FACTOR = 1.5; // Less extreme zoom
-    private readonly FADE_OUT_ALPHA = 0.8; // Not completely invisible
+
+    private batteryMeterGraphics!: Phaser.GameObjects.Graphics;
+    private batteryText!: Phaser.GameObjects.Text;
+    private readonly BATTERY_METER_WIDTH = 200;
+    private readonly BATTERY_METER_HEIGHT = 30;
+    private readonly BATTERY_METER_PADDING = 5;
 
     constructor() {
         super({ key: 'Game' });
@@ -450,10 +448,10 @@ export class Game extends Scene {
         this.load.image('player_up_walk1', 'assets/sprites/brother_walk_up_1.png');
         this.load.image('player_up_walk2', 'assets/sprites/brother_walk_up_2.png');
         this.load.image('player_death', 'assets/sprites/brother_skeleton.png');
+        this.load.image('flashlight', 'assets/sprites/flashlight.png');
     }
 
     create() {
-
         // Enable physics
         this.physics.world.setBounds(0, 0, this.GRID_SIZE * this.CELL_SIZE, this.GRID_SIZE * this.CELL_SIZE);
         
@@ -593,6 +591,7 @@ export class Game extends Scene {
         this.debugGraphics = this.add.graphics();
         this.physics.world.createDebugGraphic();
         this.physics.world.debugGraphic.setVisible(false);
+        
 
         // Create player grid position marker (initially invisible)
         this.playerGridMarker = this.add.rectangle(0, 0, this.CELL_SIZE, this.CELL_SIZE, 0x00ff00, 0.3);
@@ -600,7 +599,7 @@ export class Game extends Scene {
         this.playerGridMarker.setDepth(1);
 
         // Add debug text
-        this.debugText = this.add.text(16, 60, 'Debug Mode: OFF', {
+        this.debugText = this.add.text(16, 60, '', {
             fontSize: '24px',
             color: '#ffffff',
             backgroundColor: '#000000',
@@ -613,18 +612,71 @@ export class Game extends Scene {
         });
         this.debugText.setScrollFactor(0);
         this.debugText.setDepth(1000);
+        this.debugText.setVisible(this.debugMode);
 
         // Add keyboard input for debug mode
         this.input.keyboard?.on('keydown-T', () => {
             this.debugMode = !this.debugMode;
             this.physics.world.debugGraphic.setVisible(this.debugMode);
             this.playerGridMarker.setVisible(this.debugMode);
-            this.debugText.setText(`Debug Mode: ${this.debugMode ? 'ON' : 'OFF'}`);
+            this.debugText.setText('Debug Mode: ON');
+            this.debugText.setVisible(this.debugMode);
             
             if (!this.debugMode) {
                 this.debugGraphics.clear();
             }
         });
+
+        // Add battery meter UI
+        this.batteryMeterGraphics = this.add.graphics();
+        this.flashlight_sprite = this.add.sprite(this.scale.width - 250, this.scale.height - 35, 'flashlight');
+        this.flashlight_sprite.setDepth(1000);
+        this.flashlight_sprite.setScale(2);
+        this.batteryMeterGraphics.setScrollFactor(0);
+        this.batteryMeterGraphics.setDepth(1000);
+
+        // Create a camera for UI elements that doesn't zoom
+        const uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+        uiCamera.setScroll(0, 0);
+        uiCamera.setZoom(1);  // Keep UI at normal scale
+        
+        // Make UI camera ignore the main camera's settings
+        uiCamera.ignore([this.graphics, this.gridContainer, this.player, this.playerSprite, this.lightingMask, this.debugGraphics, this.physics.world.debugGraphic, this.playerGridMarker]);
+        
+        // Add battery percentage text
+        this.batteryText = this.add.text(
+            0, 0,
+            '100%',
+            {
+                fontSize: '24px',
+                color: '#ffffff',
+                backgroundColor: '#000000',
+                padding: {
+                    left: 5,
+                    right: 5,
+                    top: 2,
+                    bottom: 2
+                }
+            }
+        );
+        this.batteryText.setScrollFactor(0);
+        this.batteryText.setDepth(1000);
+
+        // Make main camera ignore UI elements
+        this.cameras.main.ignore([this.batteryMeterGraphics, this.batteryText, this.flashlight_sprite]);
+
+        // Update the battery meter position based on game size
+        const resize = () => {
+            const width = this.scale.width;
+            const height = this.scale.height;
+            // Update UI camera viewport
+            uiCamera.setViewport(0, 0, width, height);
+            this.updateBatteryMeter(width, height);
+        };
+
+        // Call resize initially and on window resize
+        this.scale.on('resize', resize);
+        resize();
     }
 
     private updateTargetPosition(pointer: Phaser.Input.Pointer) {
@@ -668,7 +720,7 @@ export class Game extends Scene {
         this.debugMode = false;
         this.physics.world.debugGraphic.setVisible(false);
         this.playerGridMarker.setVisible(false);
-        this.debugText.setText('Debug Mode: OFF');
+        this.debugText.setVisible(this.debugMode);
         
         // Reset player state
         this.isMoving = false;
@@ -866,16 +918,14 @@ export class Game extends Scene {
     }
 
     update(time: number, delta: number) {
-
         // Process wall changes
         this.processWallChanges(time);
 
+        // Update flashlight
+        this.updateFlashlight(time);
+
         // Update lighting mask
         this.lightingMask.clear();
-        if(!this.isTransitioning) {
-            this.playerBrightLightZone = 400;
-            this.playerDimLightZone = 200;
-        }
         
         // Calculate player's movement direction
         const velocity = this.player.body.velocity;
@@ -930,7 +980,7 @@ export class Game extends Scene {
         this.lightingMask.arc(
             this.player.x,
             this.player.y,
-            this.playerBrightLightZone / 15,
+            Math.max(this.playerDimLightZone / 10, 10),
             0,
             Phaser.Math.DegToRad(360)
         );
@@ -1129,6 +1179,72 @@ export class Game extends Scene {
                     this.playerSprite.setFlipX(true);
                     break;
             }
+        }
+    }
+
+    private updateBatteryMeter(width?: number, height?: number): void {
+        // Use provided dimensions or get from scale manager
+        const gameWidth = width || this.scale.width;
+        const gameHeight = height || this.scale.height;
+        
+        // Calculate positions in screen space (not world space)
+        const x = gameWidth - this.BATTERY_METER_WIDTH - 20;
+        const y = gameHeight - this.BATTERY_METER_HEIGHT - 20;
+
+        // Clear previous graphics
+        this.batteryMeterGraphics.clear();
+
+        // Draw black background
+        this.batteryMeterGraphics.fillStyle(0x000000);
+        this.batteryMeterGraphics.fillRect(x, y, this.BATTERY_METER_WIDTH, this.BATTERY_METER_HEIGHT);
+
+        // Draw white border
+        this.batteryMeterGraphics.lineStyle(2, 0xFFFFFF);
+        this.batteryMeterGraphics.strokeRect(x, y, this.BATTERY_METER_WIDTH, this.BATTERY_METER_HEIGHT);
+
+        // Draw battery level
+        const fillWidth = (this.BATTERY_METER_WIDTH - this.BATTERY_METER_PADDING * 2) * (this.flashlightBattery / 100);
+        this.batteryMeterGraphics.fillStyle(0xFFFFFF);
+        this.batteryMeterGraphics.fillRect(
+            x + this.BATTERY_METER_PADDING,
+            y + this.BATTERY_METER_PADDING,
+            fillWidth,
+            this.BATTERY_METER_HEIGHT - this.BATTERY_METER_PADDING * 2
+        );
+
+        // Draw percentage marks (every 25%)
+        this.batteryMeterGraphics.lineStyle(1, 0xFFFFFF);
+        for (let i = 1; i < 4; i++) {
+            const markX = x + (this.BATTERY_METER_WIDTH * (i * 0.25));
+            this.batteryMeterGraphics.beginPath();
+            this.batteryMeterGraphics.moveTo(markX, y);
+            this.batteryMeterGraphics.lineTo(markX, y + this.BATTERY_METER_HEIGHT);
+            this.batteryMeterGraphics.strokePath();
+        }
+
+        // Update battery text
+        this.batteryText.setText(`${Math.round(this.flashlightBattery)}%`);
+        this.batteryText.setPosition(
+            x + this.BATTERY_METER_WIDTH / 2 - this.batteryText.width / 2,
+            y + this.BATTERY_METER_HEIGHT / 2 - this.batteryText.height / 2
+        );
+    }
+
+    private updateFlashlight(time: number) {
+        if(time - this.flashLightBatteryCycleTimer > this.flashLightBatteryCycle) {
+            if (this.flashlightBattery > 0) {
+                this.flashlightBattery -= 1;
+            } else {
+                this.flashlightBattery = 0;
+            }
+            this.flashLightBatteryCycleTimer = time;
+            
+            // Update battery meter UI
+            this.updateBatteryMeter();
+        }
+        if (!this.isTransitioning) {
+            this.playerDimLightZone = this.flashlightMaxDistance * (this.flashlightBattery / 100);
+            this.playerBrightLightZone = this.flashlightMinDistance * (this.flashlightBattery / 100);
         }
     }
 
