@@ -75,6 +75,12 @@ export class Game extends Scene {
     private readonly MAX_BATTERIES_PER_LEVEL = 3;
     private readonly MIN_BATTERIES_PER_LEVEL = 1;
 
+    //enemy variables
+    private ghost_group!: Phaser.Physics.Arcade.Group;
+    private ghost_positions: {x: number, y: number}[] = [];
+    private ghost_animation_delays: number[] = [];
+    private ghost_count: number = 0;
+
     private isTransitioning: boolean = false;
     private isGeneratingLevel: boolean = false;
     private exitSequenceInProgress: boolean = false;
@@ -435,6 +441,8 @@ export class Game extends Scene {
         this.load.image('flashlight', 'assets/sprites/flashlight.png');
         this.load.image('battery', 'assets/sprites/battery.png');
         this.load.image('battery_ui', 'assets/sprites/battery_ui.png');
+        this.load.image('ghost_1', 'assets/sprites/ghost_1.png');
+        this.load.image('ghost_2', 'assets/sprites/ghost_2.png');
     }
 
     create() {
@@ -682,12 +690,24 @@ export class Game extends Scene {
         // Create battery group
         this.batteries = this.physics.add.group();
         
+        // Create ghost group with physics
+        this.ghost_group = this.physics.add.group({
+            bounceX: 0.5,
+            bounceY: 0.5,
+            collideWorldBounds: true
+        });
+        
         // After rooms are created and player is positioned
         this.spawnBatteries();
-        
+        this.spawnGhosts();
+
         // Make sure batteries are ignored by UI camera but affected by the mask
         this.batteries.getChildren().forEach(battery => {
             this.uiCamera.ignore(battery);
+        });
+
+        this.ghost_group.getChildren().forEach(ghost => {
+            this.uiCamera.ignore(ghost);
         });
         
         // Add collision between player and batteries
@@ -761,6 +781,8 @@ export class Game extends Scene {
         
         // Reset battery positions but keep the count
         this.battery_positions = [];
+        this.ghost_positions = [];
+        this.ghost_animation_delays = [];
         
         // Restart the scene to generate a new level
         this.scene.restart();
@@ -1010,6 +1032,8 @@ export class Game extends Scene {
         );
         this.lightingMask.closePath();
         this.lightingMask.fill();
+
+        this.updateGhosts(time);
 
         if (this.isTransitioning) {
             this.playerSprite.setPosition(this.player.x, this.player.y);
@@ -1309,6 +1333,104 @@ export class Game extends Scene {
             this.playerDimLightZone = this.flashlightMaxDistance * (this.flashlightBattery / 100);
             this.playerBrightLightZone = this.flashlightMinDistance * (this.flashlightBattery / 100);
         }
+    }
+
+    private spawnGhosts(): void {
+        // Clear any existing ghosts
+        this.ghost_group.clear(true, true);
+        this.ghost_positions = [];
+        this.ghost_animation_delays = [];
+        this.ghost_count = 0;
+        
+        // Determine how many ghosts to spawn (1 per 3 rooms)
+        const ghostsToSpawn = Math.max(1, Math.floor(this.rooms.length / 3));
+        
+        // Get a shuffled copy of the rooms array to randomize placement
+        const shuffledRooms = [...this.rooms].sort(() => Math.random() - 0.5);
+        
+        // Spawn ghosts in different rooms
+        for (let i = 0; i < ghostsToSpawn && i < shuffledRooms.length; i++) {
+            const room = shuffledRooms[i];
+            
+            // Find a random position within the room (not too close to edges)
+            const padding = 1; // Cells from the edge
+            const x = Phaser.Math.Between(
+                room.x + padding, 
+                room.x + room.width - padding
+            ) * this.CELL_SIZE + this.CELL_SIZE / 2;
+
+            const y = Phaser.Math.Between(
+                room.y + padding, 
+                room.y + room.height - padding
+            ) * this.CELL_SIZE + this.CELL_SIZE / 2;
+
+            // Create ghost sprite
+            const ghost = this.ghost_group.create(x, y, 'ghost_1') as Phaser.Physics.Arcade.Sprite;
+            this.ghost_count++;
+            ghost.setDepth(5); // Above floor, below player
+            
+            // Set physics properties
+            ghost.setCollideWorldBounds(true);
+            ghost.setBounce(0.5); // Add some bounce when colliding
+            ghost.setCircle(8); // Set circular hitbox
+            
+            // Set initial position
+            this.ghost_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
+
+            // Set initial animation delay
+            this.ghost_animation_delays.push(Phaser.Math.Between(700, 1000));
+        }
+        
+        // Set up collisions between ghosts and with player
+        this.physics.add.collider(this.ghost_group, this.ghost_group);
+        this.physics.add.collider(this.player, this.ghost_group);
+    }
+
+    private updateGhosts(time: number): void {
+        for (let i = 0; i < this.ghost_count; i++) {
+            const ghost = this.ghost_group.getChildren()[i];
+            if (ghost) {
+                const delay = this.ghost_animation_delays[i];
+                const currentTime = time % delay;
+                if (currentTime < delay / 2) {
+                    (ghost as Phaser.GameObjects.Sprite).setTexture('ghost_1');
+                } else {
+                    (ghost as Phaser.GameObjects.Sprite).setTexture('ghost_2');
+                }
+            }
+        }
+        
+        // If ghost is within screen view, follow player
+        this.ghost_group.getChildren().forEach(ghost => {
+            const ghostSprite = ghost as Phaser.Physics.Arcade.Sprite;
+            const distanceToPlayer = Phaser.Math.Distance.Between(
+                ghostSprite.x,
+                ghostSprite.y,
+                this.player.x,
+                this.player.y
+            );
+            
+            if (distanceToPlayer < 1000) {
+                // Calculate direction to player
+                const dx = this.player.x - ghostSprite.x;
+                const dy = this.player.y - ghostSprite.y;
+                
+                // Normalize the direction vector
+                const length = Math.sqrt(dx * dx + dy * dy);
+                const normalizedDx = dx / length;
+                const normalizedDy = dy / length;
+                
+                // Set velocity directly with speed of 100
+                const speed = 100;
+                ghostSprite.setVelocity(normalizedDx * speed, normalizedDy * speed);
+                
+                // Debug log to verify movement
+                // console.log(`Ghost velocity: X=${normalizedDx * speed}, Y=${normalizedDy * speed}`);
+            } else {
+                // Stop moving if player is too far
+                ghostSprite.setVelocity(0, 0);
+            }
+        }); 
     }
 
     private spawnBatteries(): void {
