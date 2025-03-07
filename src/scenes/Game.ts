@@ -1,12 +1,6 @@
 import { Scene } from 'phaser';
 import { LevelGenerator } from './LevelGenerator';
 
-interface TileChange {
-    x: number;
-    y: number;
-    isWall: boolean;
-}
-
 interface Room {
     x: number;
     y: number;
@@ -137,7 +131,7 @@ export class Game extends Scene {
         return null;
     }
 
-    private redrawTile(x: number, y: number): void {
+    private redrawTile(): void {
         // Clear all graphics and redraw everything
         this.graphics.clear();
         this.graphics.lineStyle(2, 0xFFFFFF);
@@ -227,27 +221,6 @@ export class Game extends Scene {
         return this.roomConnections.has(this.getRoomConnectionKey(room1, room2));
     }
 
-    private removeAllConnections(): void {
-        // Clear both queues first
-        this.wallsToAdd = [];
-        this.wallsToRemove = [];
-        
-        // Add all path tiles to wallsToAdd queue, but only for tiles that weren't part of rooms
-        for (const path of this.paths.values()) {
-            for (const point of path) {
-                // Only add to queue if this tile wasn't part of a room originally
-                if (!this.roomTiles[point.y][point.x]) {
-                    this.wallsToAdd.push(point);
-                }
-            }
-        }
-        
-        // Clear all connections and paths
-        this.roomConnections.clear();
-        this.paths.clear();
-        
-    }
-
     private connectRooms(room1: Room, room2: Room): void {
         const path = this.levelGenerator.connectRooms(room1, room2);
         
@@ -330,7 +303,7 @@ export class Game extends Scene {
 
         // Log queue statistics if there are any changes
         if (this.wallsToAdd.length > 0 || this.wallsToRemove.length > 0) {
-            this.redrawTile(0, 0);
+            this.redrawTile();
         }
     }
 
@@ -522,21 +495,15 @@ export class Game extends Scene {
         this.gridContainer.add(stair_down);
 
         // Draw initial grid and create initial colliders
-        this.redrawTile(0, 0);
+        this.redrawTile();
 
         // Create player with physics
         const playerX = levelData.entranceX * this.CELL_SIZE + this.CELL_SIZE / 2;
         const playerY = levelData.entranceY * this.CELL_SIZE + this.CELL_SIZE / 2;
 
-        // Create a circle texture for the player
-        const playerGraphics = this.add.graphics();
-
-        // Generate texture from graphics
-        const texture = playerGraphics.generateTexture('player', this.PLAYER_SIZE * 2, this.PLAYER_SIZE * 2);
-        playerGraphics.destroy();
-
         // Create player sprite with the circle texture
         this.player = this.physics.add.sprite(playerX, playerY, 'player');
+        this.player.setVisible(false);
         this.player.setCircle(this.PLAYER_SIZE / 2, this.PLAYER_SIZE / 2, this.PLAYER_SIZE / 2);
 
         //create player sprite to follow the circle
@@ -1430,8 +1397,6 @@ export class Game extends Scene {
         _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
         obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
     ): void {
-        // Use the player reference directly
-        const player = this.player;
         
         // Remove the battery from the scene (obj2 is the battery)
         obj2.destroy();
