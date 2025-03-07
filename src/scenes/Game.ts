@@ -504,7 +504,8 @@ export class Game extends Scene {
         // Create player sprite with the circle texture
         this.player = this.physics.add.sprite(playerX, playerY, 'player');
         this.player.setVisible(false);
-        this.player.setCircle(this.PLAYER_SIZE / 2, this.PLAYER_SIZE / 2, this.PLAYER_SIZE / 2);
+        this.player.setCircle(this.PLAYER_SIZE, this.PLAYER_SIZE, this.PLAYER_SIZE);
+        this.player.setOffset(this.PLAYER_SIZE / 2, this.PLAYER_SIZE / 2);
 
         //create player sprite to follow the circle
         this.playerSprite = this.add.sprite(playerX, playerY, 'player_down_idle');
