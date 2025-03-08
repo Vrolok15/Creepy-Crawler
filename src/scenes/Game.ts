@@ -86,6 +86,14 @@ export class Game extends Scene {
     private readonly MAX_BATTERIES_PER_LEVEL = 3;
     private readonly MIN_BATTERIES_PER_LEVEL = 1;
 
+    private key_sprite!: Phaser.GameObjects.Sprite;
+    private keys!: Phaser.Physics.Arcade.Group;
+    private key_count: number = 0;
+    private keyCountText!: Phaser.GameObjects.Text;
+    private key_positions: {x: number, y: number}[] = [];
+    private readonly MAX_KEYS_PER_LEVEL = 3;
+    private readonly MIN_KEYS_PER_LEVEL = 1;
+
     //enemy variables
     private ghost_group!: Phaser.Physics.Arcade.Group;
     private ghost_animation_delays: number[] = [];
@@ -464,6 +472,9 @@ export class Game extends Scene {
         this.load.image('heart_full', 'assets/sprites/heart_full.png');
         this.load.image('heart_half', 'assets/sprites/heart_half.png');
         this.load.image('heart_empty', 'assets/sprites/heart_empty.png');
+        this.load.image('locked_door', 'assets/sprites/door_locked.png');
+        this.load.image('key', 'assets/sprites/key.png');
+        this.load.image('key_ui', 'assets/sprites/key_ui.png');
     }
 
     create() {
@@ -671,6 +682,18 @@ export class Game extends Scene {
             padding: { left: 12, right: 12, top: 6, bottom: 6 }
         });
 
+        // Add key sprite and count text
+        this.key_sprite = this.add.sprite(this.scale.width - 450, this.scale.height - 35, 'key_ui');
+        this.key_sprite.setDepth(1000);
+        this.key_sprite.setScale(2);
+        this.keyCountText = this.add.text(this.scale.width - 420, this.scale.height - 50, '0', {
+            fontSize: '22px',
+            fontStyle: 'bold',
+            color: '#ffffff',
+            backgroundColor: '#000000',
+            padding: { left: 12, right: 12, top: 6, bottom: 6 }
+        });
+
         // Create a camera for UI elements that doesn't zoom
         this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
         this.uiCamera.setScroll(0, 0);
@@ -707,7 +730,14 @@ export class Game extends Scene {
         this.batteryText.setDepth(1000);
 
         // Make main camera ignore UI elements
-        this.cameras.main.ignore([this.batteryMeterGraphics, this.batteryText, this.flashlight_sprite, this.battery_sprite, this.batteryCountText]);
+        this.cameras.main.ignore(this.health_sprite_group);
+        this.cameras.main.ignore(this.batteryMeterGraphics);
+        this.cameras.main.ignore(this.batteryText);
+        this.cameras.main.ignore(this.flashlight_sprite);
+        this.cameras.main.ignore(this.battery_sprite);
+        this.cameras.main.ignore(this.batteryCountText);
+        this.cameras.main.ignore(this.key_sprite);
+        this.cameras.main.ignore(this.keyCountText);
 
         // Update the battery meter position based on game size
         const resize = () => {
@@ -724,6 +754,7 @@ export class Game extends Scene {
 
         // Create battery group
         this.batteries = this.physics.add.group();
+        this.keys = this.physics.add.group();
         
         // Create ghost group with physics
         this.ghost_group = this.physics.add.group({
@@ -733,12 +764,17 @@ export class Game extends Scene {
         });
         
         // After rooms are created and player is positioned
-        this.spawnBatteries();
+        this.spawnItems();
         this.spawnGhosts();
 
         // Make sure batteries are ignored by UI camera but affected by the mask
         this.batteries.getChildren().forEach(battery => {
             this.uiCamera.ignore(battery);
+        });
+
+        // Make keys ignored by UI camera but affected by the mask
+        this.keys.getChildren().forEach(key => {
+            this.uiCamera.ignore(key);
         });
 
         this.ghost_group.getChildren().forEach(ghost => {
@@ -751,6 +787,15 @@ export class Game extends Scene {
             this.batteries, 
             this.handleBatteryCollection as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback, 
             undefined, 
+            this
+        );
+
+        // Add collision between player and keys
+        this.physics.add.overlap(
+            this.player,
+            this.keys,
+            this.handleKeyCollection as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
+            undefined,
             this
         );
 
@@ -1189,6 +1234,7 @@ export class Game extends Scene {
         }
 
         this.updatePlayerAnimation(time);
+        this.updateKeysUI();
 
         // Check for exit condition
         this.handleExit();
@@ -1353,6 +1399,12 @@ export class Game extends Scene {
         this.battery_sprite.setVisible(this.battery_count > 0);
         this.batteryCountText.setVisible(this.battery_count > 0);
         this.batteryCountText.setText(`${this.battery_count}`);
+    }
+
+    private updateKeysUI(){
+        this.key_sprite.setVisible(this.key_count > 0);
+        this.keyCountText.setVisible(this.key_count > 0);
+        this.keyCountText.setText(`${this.key_count}`);
     }
 
     private updateFlashlight(time: number) {
@@ -1710,10 +1762,20 @@ export class Game extends Scene {
         });
     }
 
-    private spawnBatteries(): void {
+
+    private spawnItems(): void {
         // Clear any existing batteries
         this.batteries.clear(true, true);
         this.battery_positions = [];
+
+        // Clear any existing keys
+        this.keys.clear(true, true);
+        this.key_positions = [];
+
+        const keysToSpawn = Phaser.Math.Between(
+            this.MIN_KEYS_PER_LEVEL, 
+            this.MAX_KEYS_PER_LEVEL
+        );
         
         // Determine how many batteries to spawn (between MIN and MAX)
         const batteriesToSpawn = Phaser.Math.Between(
@@ -1728,43 +1790,61 @@ export class Game extends Scene {
         
         // Spawn batteries in different rooms
         for (let i = 0; i < batteriesToSpawn && i < shuffledRooms.length; i++) {
-            const room = shuffledRooms[i];
-            
-            // Find a random position within the room (not too close to edges)
-            const padding = 1; // Cells from the edge
-            const x = Phaser.Math.Between(
-                room.x + padding, 
-                room.x + room.width - padding
-            ) * this.CELL_SIZE + this.CELL_SIZE / 2;
-            
-            const y = Phaser.Math.Between(
-                room.y + padding, 
-                room.y + room.height - padding
-            ) * this.CELL_SIZE + this.CELL_SIZE / 2;
-            
-            // Create battery sprite
-            const battery = this.batteries.create(x, y, 'battery') as Phaser.GameObjects.Sprite;
-            battery.setDepth(5); // Above floor, below player
-            
-            // Apply the lighting mask to the battery
-            if (this.mask) {
-                battery.setMask(this.mask);
+            const room = shuffledRooms.pop();
+            if (room) {
+                this.spawnItem(room, "Battery");
             }
-            
-            // Add a small bobbing animation
-            this.tweens.add({
-                targets: battery,
-                y: y - 5,
-                duration: 1500,
-                yoyo: true,
-                repeat: -1,
-                ease: 'Sine.easeInOut'
-            });
-            
-            // Store the position for debugging
-            this.battery_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
+        }
+
+        // Spawn keys in different rooms
+        for (let i = 0; i < keysToSpawn && i < shuffledRooms.length; i++) {
+            const room = shuffledRooms.pop();
+            if (room) {
+                this.spawnItem(room, "Key");
+            }
         }
     }
+
+    private spawnItem(room: Room, itemType: string): void {
+        // Find a random position within the room (not too close to edges)
+        const padding = 1; // Cells from the edge
+        const x = Phaser.Math.Between(
+            room.x + padding, 
+            room.x + room.width - padding   
+        ) * this.CELL_SIZE + this.CELL_SIZE / 2;
+
+        const y = Phaser.Math.Between(
+            room.y + padding, 
+            room.y + room.height - padding
+        ) * this.CELL_SIZE + this.CELL_SIZE / 2;
+
+        // Create item sprite
+        let item: Phaser.GameObjects.Sprite;
+        if (itemType == "Battery") {
+            item = this.batteries.create(x, y, 'battery') as Phaser.GameObjects.Sprite;
+            this.battery_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
+        } else {
+            item = this.keys.create(x, y, 'key') as Phaser.GameObjects.Sprite;
+            this.key_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
+        }
+        item.setDepth(5); // Above floor, below player
+
+        // Apply the lighting mask to the item  
+        if (this.mask) {
+            item.setMask(this.mask);
+        }
+
+        // Add a small bobbing animation
+        this.tweens.add({
+            targets: item,
+            y: y - 5,
+            duration: 1500,
+            yoyo: true,
+            repeat: -1,
+            ease: 'Sine.easeInOut'
+        });
+    }
+    
     
     private showPlayerEventText(message: string, color: string = '#ffff00'): void {
         // Use player position for the text
@@ -1809,6 +1889,23 @@ export class Game extends Scene {
         
         // Show pickup text
         this.showPlayerEventText('+1 Battery');
+    }
+
+    private handleKeyCollection(
+        _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
+        obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
+    ): void {
+        // Remove the key from the scene (obj2 is the key)
+        obj2.destroy();
+
+        // Increment key count
+        this.key_count++;
+        
+        console.log(`Key collected! Total: ${this.key_count}`);
+        this.updateKeysUI();
+
+        // Show pickup text
+        this.showPlayerEventText('+1 Key');
     }
 
     // Add cleanup method for scene shutdown
