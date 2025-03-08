@@ -29,6 +29,8 @@ export class Game extends Scene {
     private levelText!: Phaser.GameObjects.Text;
     private exitX: number = 0;
     private exitY: number = 0;
+    private entranceX: number = 0;
+    private entranceY: number = 0;
     private exitPoint: Point = { x: 0, y: 0 }; // Track exit position
     private wallGroup!: Phaser.Physics.Arcade.StaticGroup;
     private debugMode: boolean = false;
@@ -83,8 +85,6 @@ export class Game extends Scene {
     private readonly MAX_BATTERIES_PER_LEVEL = 3;
     private readonly MIN_BATTERIES_PER_LEVEL = 1;
 
-    private brightLightCollider: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
-
     //enemy variables
     private ghost_group!: Phaser.Physics.Arcade.Group;
     private ghost_animation_delays: number[] = [];
@@ -94,6 +94,7 @@ export class Game extends Scene {
     private isGeneratingLevel: boolean = false;
     private exitSequenceInProgress: boolean = false;
     private transitionPromise: Promise<void> | null = null;
+    private transitionStart: number = 0;
 
     private readonly TRANSITION_DURATION = 2500; // 2500 second transition
     private readonly CAMERA_ZOOM_FACTOR = 1.5; // Less extreme zoom
@@ -512,6 +513,8 @@ export class Game extends Scene {
 
         // Create entrance and exit markers
         var stair_up = this.add.sprite(levelData.entranceX * this.CELL_SIZE + this.CELL_SIZE / 2, levelData.entranceY * this.CELL_SIZE + this.CELL_SIZE / 2, 'stair_up');
+        this.entranceX = levelData.entranceX;
+        this.entranceY = levelData.entranceY;
         stair_up.setDepth(1);
         stair_up.setScale(2);
         this.gridContainer.add(stair_up);
@@ -564,36 +567,39 @@ export class Game extends Scene {
         });
         this.levelText.setScrollFactor(0);
 
-        // Setup mouse input
-        this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
-            if (pointer.button === 0) { // Only left mouse button
-                this.isMoving = true;
-                this.updateTargetPosition(pointer);
-            }
-        });
+        if (!this.isTransitioning){
+            // Setup mouse input
+            this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
+                if (pointer.button === 0) { // Only left mouse button
+                    this.isMoving = true;
+                    this.updateTargetPosition(pointer);
+                }
+            });
 
-        this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
-            if (this.isMoving && pointer.isDown && pointer.button === 0) {
-                this.updateTargetPosition(pointer);
-            } else {
+            this.input.on('pointermove', (pointer: Phaser.Input.Pointer) => {
+                if (this.isMoving && pointer.isDown && pointer.button === 0) {
+                    this.updateTargetPosition(pointer);
+                } else {
+                    this.isMoving = false;
+                }
+            });
+
+            this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+                if (pointer.button === 0) {
+                    this.isMoving = false;
+                    this.player.setVelocity(0, 0);
+                }
+            });
+
+            // Add a handler for when pointer leaves game canvas
+            this.game.canvas.addEventListener('mouseout', () => {
                 this.isMoving = false;
-            }
-        });
+                if (this.player) {
+                    this.player.setVelocity(0, 0);
+                }
+            });
 
-        this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-            if (pointer.button === 0) {
-                this.isMoving = false;
-                this.player.setVelocity(0, 0);
-            }
-        });
-
-        // Add a handler for when pointer leaves game canvas
-        this.game.canvas.addEventListener('mouseout', () => {
-            this.isMoving = false;
-            if (this.player) {
-                this.player.setVelocity(0, 0);
-            }
-        });
+        }
 
         // Create debug graphics
         this.debugGraphics = this.add.graphics();
@@ -827,6 +833,7 @@ export class Game extends Scene {
     }
 
     private async playExitTransition(): Promise<void> {
+        this.transitionStart = 0;
         if (this.transitionPromise) {
             return this.transitionPromise;
         }
@@ -841,7 +848,7 @@ export class Game extends Scene {
                 const exitCenterY = this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2;
                 
                 // Stop any current movement and set small rightward velocity
-                this.player.setVelocity(50, 0); // Small constant rightward velocity
+                this.player.setVelocity(20, 0); // Small constant rightward velocity
                 this.isMoving = true;
                 this.lastDirection = 'right';
                 
@@ -982,10 +989,6 @@ export class Game extends Scene {
                 duration: 500,
                 ease: 'Quad.Out'
             });
-            
-            // Reset player position
-            this.player.setPosition(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2);
-            this.playerSprite.setPosition(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2);
             
             // Wait for transitions to complete
             this.time.delayedCall(500, () => {
@@ -1178,7 +1181,7 @@ export class Game extends Scene {
             this.player.setVelocity(velocity.x, velocity.y);
             // Update visual sprite position to match physics player
             this.playerSprite.setPosition(this.player.x, this.player.y);
-        } else if (!this.input.activePointer.isDown || this.input.activePointer.button !== 0) {
+        } else if (!this.isTransitioning && !this.input.activePointer.isDown || this.input.activePointer.button !== 0) {
             // Stop movement if mouse button is released
             this.isMoving = false;
             this.player.setVelocity(0, 0);
@@ -1212,14 +1215,20 @@ export class Game extends Scene {
     }
 
     updatePlayerAnimation(time: number) {
+        if(this.transitionStart == 0){
+            this.transitionStart = time;
+        }
         if(this.playerHitPoints <= 0){
             this.playerSprite.setTexture('player_dead');
             this.playerSprite.setAlpha(1);
             this.playerSprite.setTint(0xffffff);
             return;
         }
-        if (!this.player?.body || !this.playerSprite) return;
-
+        if (!this.player?.body || !this.playerSprite) return; 
+        if(this.isTransitioning){
+            this.player.setVelocity(5, 0);
+            this.playerSprite.setPosition(this.player.x + (time - this.transitionStart) * 0.001, this.player.y);
+        }
         const velocity = this.player.body.velocity;
         const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
         
@@ -1452,7 +1461,8 @@ export class Game extends Scene {
                 room.y + room.height - padding
             ) * this.CELL_SIZE + this.CELL_SIZE / 2;
 
-            if(Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < this.playerBrightLightZone){
+            if(Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < this.playerBrightLightZone || Phaser.Math.Distance.Between(x, y, this.entranceX, this.entranceY) < this.playerBrightLightZone)
+            {
                 continue;
             }
             // Create ghost sprite
@@ -1500,12 +1510,7 @@ export class Game extends Scene {
         const ghostsToDestroy: {ghost: Phaser.GameObjects.GameObject, sprite: Phaser.Physics.Arcade.Sprite}[] = [];
         
         // If ghost is within screen view, follow player
-        this.ghost_group.getChildren().forEach((ghost, index) => {
-            // Skip if ghost is not active
-            if (!ghost.active) {
-                return;
-            }
-            
+        this.ghost_group.getChildren().forEach((ghost) => {
             const ghostSprite = ghost as Phaser.Physics.Arcade.Sprite;
             this.uiCamera.ignore(ghostSprite);
             const distanceToPlayer = Phaser.Math.Distance.Between(
@@ -1518,11 +1523,10 @@ export class Game extends Scene {
             // Check if ghost is in bright light zone
             const isInBrightLight = this.isInBrightLight(ghostSprite.x, ghostSprite.y);
             
-            console.log(`[DEBUG] Ghost #${index} at (${Math.round(ghostSprite.x)}, ${Math.round(ghostSprite.y)}), distance: ${Math.round(distanceToPlayer)}, in bright light: ${isInBrightLight}`);
-            
             if (isInBrightLight) {
                 // Mark ghost for destruction if it's in bright light
                 ghostsToDestroy.push({ghost, sprite: ghostSprite});
+                ghost.active = false;
                 return; // Skip the rest of the logic for this ghost
             }
             
@@ -1557,15 +1561,7 @@ export class Game extends Scene {
         
         // Destroy collected ghosts after iteration
         if (ghostsToDestroy.length > 0) {
-            // Only show message for ghosts destroyed by light
-            let lightDestroyCount = 0;
-            
-            ghostsToDestroy.forEach(({ghost, sprite}, index) => {
-                // Skip if ghost is not active anymore
-                if (!ghost.active || !sprite.active) {
-                    return;
-                }
-                
+            ghostsToDestroy.forEach(({ghost, sprite}) => {
                 // Destroy the ghost
                 this.destroyGhost(ghost, sprite);
             });
@@ -1589,10 +1585,11 @@ export class Game extends Scene {
             targets: ghostSprite,
             alpha: 0,
             scale: 0,
+            tint: 0xffffff,
             duration: 500,
             onComplete: () => {
                 // Check if ghost still exists before destroying
-                if (ghost.active && ghostSprite.active) {
+                if (ghostSprite.active) {
                     ghost.destroy();
                     this.ghost_count = Math.max(0, this.ghost_count - 1);
                 } 
