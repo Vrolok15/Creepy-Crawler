@@ -55,10 +55,14 @@ export class LevelGenerator {
         this.grid = Array(config.gridSize).fill(false).map(() => Array(config.gridSize).fill(true));
     }
 
+    createGrid(): boolean[][] {
+        return Array(this.config.gridSize).fill(false).map(() => Array(this.config.gridSize).fill(true));
+    }
+
     generateLevel(): LevelData {
         // Reset state
         this.rooms = [];
-        this.grid = Array(this.config.gridSize).fill(false).map(() => Array(this.config.gridSize).fill(true));
+        this.grid = this.createGrid();
 
         // Create root node
         const root: BSPNode = {

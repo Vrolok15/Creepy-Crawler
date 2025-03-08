@@ -94,7 +94,7 @@ export class Game extends Scene {
     private readonly MAX_KEYS_PER_LEVEL = 3;
     private readonly MIN_KEYS_PER_LEVEL = 1;
 
-    private lockedDoorPositions: {x: number, y: number, door: Phaser.GameObjects.Sprite}[] = [];
+    private lockedDoorPositions: {x: number, y: number, door: Phaser.Physics.Arcade.Sprite}[] = [];
     private lockedDoors!: Phaser.Physics.Arcade.StaticGroup;
     private unlockedDoors: number = 0;
     private MAX_LOCKED_DOORS_PER_LEVEL: number = 5;
@@ -280,7 +280,14 @@ export class Game extends Scene {
 
     private isValidLockedDoorPosition(x: number, y: number): boolean {
         if (x > 1 && x < this.GRID_SIZE - 2 && y > 1 && y < this.GRID_SIZE - 2){
-            if (this.grid[y-1][x] && this.grid[y+1][x] && !this.grid[y][x-1] && !this.grid[y][x+1]){
+            var distanceToOtherDoors = 100;
+            for (const position of this.lockedDoorPositions){
+                distanceToOtherDoors = Math.min(distanceToOtherDoors, Math.abs(position.x - x) + Math.abs(position.y - y));
+            }
+            if (distanceToOtherDoors < 5){
+                return false;
+            }
+            else if (this.grid[y-1][x] && this.grid[y+1][x] && !this.grid[y][x-1] && !this.grid[y][x+1]){
                 return true;
             }
             else if (this.grid[y][x-1] && this.grid[y][x+1] && !this.grid[y-1][x] && !this.grid[y+1][x]){
@@ -535,7 +542,7 @@ export class Game extends Scene {
         const levelData = levelGenerator.generateLevel();
         
         // Initialize grid and room data first
-        this.grid = levelData.grid;
+        this.grid = levelGenerator.createGrid();
         this.exitX = levelData.exitX;
         this.exitY = levelData.exitY;
         this.exitPoint = { x: this.exitX, y: this.exitY };
@@ -844,7 +851,7 @@ export class Game extends Scene {
         // Create dialog container (initially hidden)
         this.createDialogSystem();
         if(this.currentLevel === 1){
-            this.showDialog("Zack! Your sister Ashley is kidnapped by goblins! Find her and led her out of the dungeon until your flashlight runs out!", "Let's go!", () => {
+            this.showDialog("Zack! Your sister Ashley is kidnapped by goblins! Find her and lead her out of the dungeon until your flashlight runs out!", "Let's go!", () => {
                 console.log("Dialog closed!");
             });
         }
@@ -1932,14 +1939,14 @@ export class Game extends Scene {
         console.log(`Added locked door at ${x}, ${y}`);
     }
 
-    private removeLockedDoor(door: Phaser.GameObjects.Sprite): void {
+    private removeLockedDoor(door: Phaser.Physics.Arcade.Sprite): void {
         door.destroy();
         this.lockedDoorPositions = this.lockedDoorPositions.filter(position => position.x !== door.x && position.y !== door.y);
         console.log(`Removed locked door at ${door.x}, ${door.y}`);
     }
 
     private updateLockedDoors(): void {
-        let doorsToRemove: Phaser.GameObjects.Sprite[] = [];
+        let doorsToRemove: Phaser.Physics.Arcade.Sprite[] = [];
         for (const position of this.lockedDoorPositions){
             if (this.grid[position.y][position.x] || !this.isValidLockedDoorPosition(position.x, position.y)){
                 doorsToRemove.push(position.door);
@@ -2019,12 +2026,10 @@ export class Game extends Scene {
         if (this.key_count > 0){
             this.key_count--;
             this.updateKeysUI();
-            this.removeLockedDoor(obj2 as Phaser.GameObjects.Sprite);
+            this.removeLockedDoor(obj2 as Phaser.Physics.Arcade.Sprite);
             this.showPlayerEventText('Unlocked!');
             this.unlockedDoors++;
-        } else {
-            this.showPlayerEventText('Need a key', '#ff0000');
-        }
+        } 
     }
 
     // Add cleanup method for scene shutdown
@@ -2262,7 +2267,7 @@ export class Game extends Scene {
         const angleDiff = Phaser.Math.Angle.Wrap(angleToPosition - this.lastPlayerAngle);
         
         // Check if within flashlight cone (60 degrees)
-        const halfConeAngle = Phaser.Math.DegToRad(30);
+        const halfConeAngle = Phaser.Math.DegToRad(60);
         const isInCone = Math.abs(angleDiff) <= halfConeAngle;
         
         return isInCone;
