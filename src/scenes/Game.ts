@@ -94,6 +94,11 @@ export class Game extends Scene {
     private readonly MAX_KEYS_PER_LEVEL = 3;
     private readonly MIN_KEYS_PER_LEVEL = 1;
 
+    private lockedDoorPositions: {x: number, y: number, door: Phaser.GameObjects.Sprite}[] = [];
+    private lockedDoors!: Phaser.Physics.Arcade.StaticGroup;
+    private unlockedDoors: number = 0;
+    private MAX_LOCKED_DOORS_PER_LEVEL: number = 5;
+
     //enemy variables
     private ghost_group!: Phaser.Physics.Arcade.Group;
     private ghost_animation_delays: number[] = [];
@@ -273,6 +278,19 @@ export class Game extends Scene {
         }
     }
 
+    private isValidLockedDoorPosition(x: number, y: number): boolean {
+        if (x > 1 && x < this.GRID_SIZE - 2 && y > 1 && y < this.GRID_SIZE - 2){
+            if (this.grid[y-1][x] && this.grid[y+1][x] && !this.grid[y][x-1] && !this.grid[y][x+1]){
+                return true;
+            }
+            else if (this.grid[y][x-1] && this.grid[y][x+1] && !this.grid[y-1][x] && !this.grid[y+1][x]){
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private processWallChanges(time: number): void {
         if (time - this.lastWallUpdate < this.WALL_UPDATE_INTERVAL) {
             return;
@@ -320,6 +338,11 @@ export class Game extends Scene {
                                 this.wallsToRemove.splice(index, 1);
                             }
                             this.grid[point.y][point.x] = false;
+                            if (this.isValidLockedDoorPosition(point.x, point.y)){
+                                if (this.unlockedDoors + this.lockedDoors.getChildren().length < this.MAX_LOCKED_DOORS_PER_LEVEL){
+                                    this.addLockedDoor(point.x, point.y);
+                                }
+                            }
                             break;
                         }
                     }
@@ -330,6 +353,11 @@ export class Game extends Scene {
             if (this.wallsToRemove.length > 0) {
                 const point = this.wallsToRemove.shift()!;
                 this.grid[point.y][point.x] = false;
+                if (this.isValidLockedDoorPosition(point.x, point.y)){
+                    if (this.unlockedDoors + this.lockedDoors.getChildren().length < this.MAX_LOCKED_DOORS_PER_LEVEL){
+                        this.addLockedDoor(point.x, point.y);
+                    }
+                }
             }
         }
 
@@ -337,6 +365,8 @@ export class Game extends Scene {
         if (this.wallsToAdd.length > 0 || this.wallsToRemove.length > 0) {
             this.redrawTile();
         }
+
+        this.updateLockedDoors();
     }
 
     private getRoomConnectionCount(room: Room): number {
@@ -472,7 +502,7 @@ export class Game extends Scene {
         this.load.image('heart_full', 'assets/sprites/heart_full.png');
         this.load.image('heart_half', 'assets/sprites/heart_half.png');
         this.load.image('heart_empty', 'assets/sprites/heart_empty.png');
-        this.load.image('locked_door', 'assets/sprites/door_locked.png');
+        this.load.image('locked_door', 'assets/sprites/locked_door.png');
         this.load.image('key', 'assets/sprites/key.png');
         this.load.image('key_ui', 'assets/sprites/key_ui.png');
     }
@@ -486,6 +516,7 @@ export class Game extends Scene {
         
         // Create wall group for collisions
         this.wallGroup = this.physics.add.staticGroup();
+        this.lockedDoors = this.physics.add.staticGroup();
 
         // Create lighting mask
         this.lightingMask = this.add.graphics();
@@ -560,6 +591,7 @@ export class Game extends Scene {
 
         // Add collision between player and walls
         this.physics.add.collider(this.player, this.wallGroup);
+        this.physics.add.collider(this.player, this.lockedDoors);
 
         // Apply masks to all objects after player is created
         this.gridContainer.setMask(this.mask);
@@ -752,7 +784,8 @@ export class Game extends Scene {
         this.scale.on('resize', resize);
         resize();
 
-        // Create battery group
+        // Create groups
+        this.lockedDoors = this.physics.add.staticGroup();
         this.batteries = this.physics.add.group();
         this.keys = this.physics.add.group();
         
@@ -795,6 +828,15 @@ export class Game extends Scene {
             this.player,
             this.keys,
             this.handleKeyCollection as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
+            undefined,
+            this
+        );
+
+        // Add collision between player and locked doors
+        this.physics.add.overlap(
+            this.player,
+            this.lockedDoors,
+            this.handleLockedDoorInteraction as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
             undefined,
             this
         );
@@ -842,6 +884,7 @@ export class Game extends Scene {
         
         // Clear all game objects
         this.wallGroup.clear(true, true);
+        this.lockedDoors.clear(true, true);
         this.graphics.clear();
         this.debugGraphics.clear();
         
@@ -1844,7 +1887,68 @@ export class Game extends Scene {
             ease: 'Sine.easeInOut'
         });
     }
-    
+
+    private addLockedDoor(x: number, y: number): void {
+        // Create the locked door sprite
+        const lockedDoor = this.lockedDoors.create(
+            x * this.CELL_SIZE + this.CELL_SIZE / 2, 
+            y * this.CELL_SIZE + this.CELL_SIZE / 2, 
+            'locked_door'
+        ) as Phaser.Physics.Arcade.Sprite;
+        
+        // Set sprite properties
+        lockedDoor.setScale(2);
+        lockedDoor.setDepth(5);
+        lockedDoor.setImmovable(true);
+        
+        // Adjust the physics body to match the visual size
+        if (lockedDoor.body) {
+            lockedDoor.body.setSize(this.CELL_SIZE / 2, this.CELL_SIZE / 2);
+            // Refresh the physics body
+            lockedDoor.body.reset(
+                x * this.CELL_SIZE + this.CELL_SIZE / 2,
+                y * this.CELL_SIZE + this.CELL_SIZE / 2
+            );
+        }
+        
+        // Add to tracking array
+        this.lockedDoorPositions.push({
+            x: Math.floor(x), 
+            y: Math.floor(y), 
+            door: lockedDoor
+        });
+        
+        // Apply lighting mask
+        if (this.mask) {
+            lockedDoor.setMask(this.mask);
+        }
+        
+        // Make UI camera ignore door
+        this.uiCamera.ignore(lockedDoor);
+        
+        // Add collision with player
+        this.physics.add.collider(this.player, lockedDoor);
+        
+        console.log(`Added locked door at ${x}, ${y}`);
+    }
+
+    private removeLockedDoor(door: Phaser.GameObjects.Sprite): void {
+        door.destroy();
+        this.lockedDoorPositions = this.lockedDoorPositions.filter(position => position.x !== door.x && position.y !== door.y);
+        console.log(`Removed locked door at ${door.x}, ${door.y}`);
+    }
+
+    private updateLockedDoors(): void {
+        let doorsToRemove: Phaser.GameObjects.Sprite[] = [];
+        for (const position of this.lockedDoorPositions){
+            if (this.grid[position.y][position.x] || !this.isValidLockedDoorPosition(position.x, position.y)){
+                doorsToRemove.push(position.door);
+            }
+        }
+        for (const door of doorsToRemove){
+            this.removeLockedDoor(door);
+        }
+    }
     
     private showPlayerEventText(message: string, color: string = '#ffff00'): void {
         // Use player position for the text
@@ -1906,6 +2010,21 @@ export class Game extends Scene {
 
         // Show pickup text
         this.showPlayerEventText('+1 Key');
+    }
+
+    private handleLockedDoorInteraction(
+        _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
+        obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
+    ): void {
+        if (this.key_count > 0){
+            this.key_count--;
+            this.updateKeysUI();
+            this.removeLockedDoor(obj2 as Phaser.GameObjects.Sprite);
+            this.showPlayerEventText('Unlocked!');
+            this.unlockedDoors++;
+        } else {
+            this.showPlayerEventText('Need a key', '#ff0000');
+        }
     }
 
     // Add cleanup method for scene shutdown
