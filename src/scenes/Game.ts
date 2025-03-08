@@ -70,7 +70,7 @@ export class Game extends Scene {
     private health_sprite3!: Phaser.GameObjects.Sprite;
     private flashlight_sprite!: Phaser.GameObjects.Sprite;
     private flashlightBattery: number = 100;
-    private flashLightBatteryCycle: number = 3000; // 3 seconds
+    private flashLightBatteryCycle: number = 1000; // 1 second
     private flashLightBatteryCycleTimer: number = 0;
     private flashlightMaxDistance: number = 400;
     private flashlightMinDistance: number = 200;
@@ -1380,10 +1380,49 @@ export class Game extends Scene {
     }
 
     private playerTakeDamage(): void {
-        this.playerHitPoints -= 1;
+        // Reduce player hit points
+        this.playerHitPoints--;
+        
+        // Create blood particle effect
+        const bloodParticles = this.add.particles(this.player.x, this.player.y, 'ghost_1', {
+            speed: { min: 50, max: 200 },
+            scale: { start: 0.2, end: 0.05 },
+            alpha: { start: 0.8, end: 0 },
+            lifespan: { min: 400, max: 600 },
+            blendMode: 'MULTIPLY',
+            tint: 0xFF0000, // Red tint for blood
+            quantity: 20,
+            angle: { min: 0, max: 360 },
+            emitting: false
+        });
+        
+        // Make sure particles are affected by the lighting mask
+        if (this.mask) {
+            bloodParticles.setMask(this.mask);
+        }
+        
+        // Make sure UI camera ignores particles
+        if (this.uiCamera) {
+            this.uiCamera.ignore(bloodParticles);
+        }
+        
+        // Emit particles in a burst
+        bloodParticles.explode(30);
+        
+        // Destroy particles after they're done
+        this.time.delayedCall(600, () => {
+            bloodParticles.destroy();
+        });
+        
+        // Flash the player red
+        this.playerSprite.setTint(0xFF0000);
         this.playerSprite.setAlpha(0.75);
-        this.playerSprite.setTint(0xff0000);
         this.showPlayerEventText('Hit!', '#ff0000');
+        
+        // Camera shake effect
+        this.cameras.main.shake(200, 0.01);
+        
+        // Update health display
         if(this.playerHitPoints == 5){
             this.health_sprite3.setTexture('heart_half');
         }
@@ -1411,10 +1450,14 @@ export class Game extends Scene {
         else{
             this.health_sprite.setTexture('heart_full');
         }
-        setTimeout(() => {
+        
+        // Reset player appearance after invincibility duration
+        this.time.delayedCall(this.playerInvincibilityDuration, () => {
             this.playerSprite.setAlpha(1);
-            this.playerSprite.setTint(0xffffff);
-        }, this.playerInvincibilityDuration);
+            this.playerSprite.clearTint();
+        });
+        
+        // Check for game over
         if(this.playerHitPoints <= 0){
             this.ghost_group.clear(true, true);
             this.playerHitPoints = 0;
@@ -1581,18 +1624,86 @@ export class Game extends Scene {
             this.ghost_count = Math.max(1, this.ghost_group.getChildren().length);
         }
         
+        // Store the ghost's position since it will be destroyed
+        const ghostX = ghostSprite.x;
+        const ghostY = ghostSprite.y;
+        
+        // Create particle effect for ghost destruction
+        const particles = this.add.particles(ghostX, ghostY, 'ghost_1', {
+            speed: { min: 50, max: 150 },
+            scale: { start: 0.4, end: 0.1 },
+            alpha: { start: 0.8, end: 0 },
+            lifespan: 800,
+            blendMode: 'ADD',
+            quantity: 15,
+            rotate: { min: 0, max: 360 },
+            emitting: false
+        });
+        
+        // Make sure particles are affected by the lighting mask
+        if (this.mask) {
+            particles.setMask(this.mask);
+        }
+        
+        // Make sure UI camera ignores particles
+        if (this.uiCamera) {
+            this.uiCamera.ignore(particles);
+        }
+        
+        // Emit particles in a burst
+        particles.explode(20);
+        
+        // Add a flash effect
+        ghostSprite.setTint(0xFFFFFF);
+        
+        // Create a shockwave effect
+        const shockwave = this.add.graphics();
+        shockwave.setDepth(ghostSprite.depth - 1);
+        
+        // Make sure shockwave is affected by the lighting mask
+        if (this.mask) {
+            shockwave.setMask(this.mask);
+        }
+        
+        // Make sure UI camera ignores shockwave
+        if (this.uiCamera) {
+            this.uiCamera.ignore(shockwave);
+        }
+        
+        // Immediately destroy the ghost object to prevent multiple destructions
+        
+        // Animate the shockwave
+        this.tweens.add({
+            targets: { radius: 0, alpha: 0.7 },
+            radius: 50,
+            alpha: 0,
+            duration: 500,
+            onUpdate: (tween, target) => {
+                shockwave.clear();
+                shockwave.lineStyle(3, 0xFFFFFF, target.alpha);
+                shockwave.strokeCircle(ghostX, ghostY, target.radius);
+            },
+            onComplete: () => {
+                shockwave.destroy();
+                ghost.destroy();
+                this.ghost_count = Math.max(0, this.ghost_count - 1);
+            }
+        });
+        
+        // Animate the ghost fading away
         this.tweens.add({
             targets: ghostSprite,
             alpha: 0,
             scale: 0,
-            tint: 0xffffff,
             duration: 500,
             onComplete: () => {
-                // Check if ghost still exists before destroying
-                if (ghostSprite.active) {
-                    ghost.destroy();
-                    this.ghost_count = Math.max(0, this.ghost_count - 1);
-                } 
+                // Destroy the sprite
+                ghostSprite.destroy();
+                
+                // Set a timer to destroy particles after their lifespan
+                this.time.delayedCall(800, () => {
+                    particles.destroy();
+                });
             }
         });
     }
