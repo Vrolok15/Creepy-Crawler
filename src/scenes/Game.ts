@@ -83,9 +83,10 @@ export class Game extends Scene {
     private readonly MAX_BATTERIES_PER_LEVEL = 3;
     private readonly MIN_BATTERIES_PER_LEVEL = 1;
 
+    private brightLightCollider: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
+
     //enemy variables
     private ghost_group!: Phaser.Physics.Arcade.Group;
-    private ghost_positions: {x: number, y: number}[] = [];
     private ghost_animation_delays: number[] = [];
     private ghost_count: number = 0;
 
@@ -819,7 +820,6 @@ export class Game extends Scene {
         
         // Reset battery positions but keep the count
         this.battery_positions = [];
-        this.ghost_positions = [];
         this.ghost_animation_delays = [];
         
         // Restart the scene to generate a new level
@@ -841,7 +841,7 @@ export class Game extends Scene {
                 const exitCenterY = this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2;
                 
                 // Stop any current movement and set small rightward velocity
-                this.player.setVelocity(20, 0); // Small constant rightward velocity
+                this.player.setVelocity(50, 0); // Small constant rightward velocity
                 this.isMoving = true;
                 this.lastDirection = 'right';
                 
@@ -929,12 +929,6 @@ export class Game extends Scene {
         }
 
         const isAtExit = this.checkExitReached();
-        console.log('Checking exit:', { 
-            isAtExit,
-            isTransitioning: this.isTransitioning,
-            isGeneratingLevel: this.isGeneratingLevel,
-            exitSequenceInProgress: this.exitSequenceInProgress
-        });
 
         if (isAtExit) {
             try {
@@ -1076,15 +1070,6 @@ export class Game extends Scene {
 
         this.updateGhosts(time);
 
-        if (this.isTransitioning) {
-            this.playerSprite.setPosition(this.player.x, this.player.y);
-            const frame = this.currentFrame % 2 + 1;
-            this.playerSprite.setTexture(`player_left_walk${frame}`);
-            
-            // Skip regular updates during transition
-            return;
-        }
-
         // Update player grid marker position
         const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
         const playerGridY = Math.floor(this.player.y / this.CELL_SIZE);
@@ -1158,7 +1143,7 @@ export class Game extends Scene {
         }
 
         // Handle movement
-        if (this.isMoving && this.input.activePointer.isDown && this.input.activePointer.button === 0) {
+        if (!this.isTransitioning && this.isMoving && this.input.activePointer.isDown && this.input.activePointer.button === 0) {
             // Calculate distance to target
             const distanceToTarget = Phaser.Math.Distance.Between(
                 this.player.x,
@@ -1442,7 +1427,6 @@ export class Game extends Scene {
     private spawnGhosts(): void {
         // Clear any existing ghosts
         this.ghost_group.clear(true, true);
-        this.ghost_positions = [];
         this.ghost_animation_delays = [];
         this.ghost_count = 0;
         
@@ -1479,9 +1463,6 @@ export class Game extends Scene {
             // Set physics properties
             ghost.setCollideWorldBounds(true);
             ghost.setCircle(8); // Set circular hitbox
-            
-            // Set initial position
-            this.ghost_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
 
             // Set initial animation delay
             this.ghost_animation_delays.push(Phaser.Math.Between(700, 1000));
@@ -1492,6 +1473,16 @@ export class Game extends Scene {
     }
 
     private updateGhosts(time: number): void {
+        // Skip if no ghosts
+        if (this.ghost_group.getChildren().length === 0) {
+            return;
+        }
+        
+        // Ensure ghost_count matches actual count
+        if (this.ghost_count !== this.ghost_group.getChildren().length) {
+            this.ghost_count = this.ghost_group.getChildren().length;
+        }
+        
         for (let i = 0; i < this.ghost_count; i++) {
             const ghost = this.ghost_group.getChildren()[i];
             if (ghost) {
@@ -1505,8 +1496,16 @@ export class Game extends Scene {
             }
         }
         
+        // Collect ghosts to destroy
+        const ghostsToDestroy: {ghost: Phaser.GameObjects.GameObject, sprite: Phaser.Physics.Arcade.Sprite}[] = [];
+        
         // If ghost is within screen view, follow player
-        this.ghost_group.getChildren().forEach(ghost => {
+        this.ghost_group.getChildren().forEach((ghost, index) => {
+            // Skip if ghost is not active
+            if (!ghost.active) {
+                return;
+            }
+            
             const ghostSprite = ghost as Phaser.Physics.Arcade.Sprite;
             this.uiCamera.ignore(ghostSprite);
             const distanceToPlayer = Phaser.Math.Distance.Between(
@@ -1515,6 +1514,17 @@ export class Game extends Scene {
                 this.player.x,
                 this.player.y
             );
+            
+            // Check if ghost is in bright light zone
+            const isInBrightLight = this.isInBrightLight(ghostSprite.x, ghostSprite.y);
+            
+            console.log(`[DEBUG] Ghost #${index} at (${Math.round(ghostSprite.x)}, ${Math.round(ghostSprite.y)}), distance: ${Math.round(distanceToPlayer)}, in bright light: ${isInBrightLight}`);
+            
+            if (isInBrightLight) {
+                // Mark ghost for destruction if it's in bright light
+                ghostsToDestroy.push({ghost, sprite: ghostSprite});
+                return; // Skip the rest of the logic for this ghost
+            }
             
             if (distanceToPlayer < 1000) {
                 // Calculate direction to player
@@ -1530,32 +1540,62 @@ export class Game extends Scene {
                 let speed = Math.max(50, 100 - distanceToPlayer / 10);
                 ghostSprite.setVelocity(normalizedDx * speed, normalizedDy * speed);
                 
-                if(distanceToPlayer < 10){
+                if(distanceToPlayer < 10 && ghost.active){
                     if(time - this.playerLastHitTime > this.playerInvincibilityDuration){
                         this.playerTakeDamage();
                         this.playerLastHitTime = time;
-                        this.destroyGhost(ghost, ghostSprite);
+                        ghostsToDestroy.push({ghost, sprite: ghostSprite});
+                        return;
                     }
                 }
             } else {
-                // Stop moving if player is too far
-                ghostSprite.setVelocity(0, 0);
+                //add random movement to the ghost
+                ghostSprite.setVelocity(Phaser.Math.Between(-10, 10), Phaser.Math.Between(-10, 10));
             }
         }); 
+        
+        
+        // Destroy collected ghosts after iteration
+        if (ghostsToDestroy.length > 0) {
+            // Only show message for ghosts destroyed by light
+            let lightDestroyCount = 0;
+            
+            ghostsToDestroy.forEach(({ghost, sprite}, index) => {
+                // Skip if ghost is not active anymore
+                if (!ghost.active || !sprite.active) {
+                    return;
+                }
+                
+                // Destroy the ghost
+                this.destroyGhost(ghost, sprite);
+            });
+        }
     }
 
-    private destroyGhost(ghost: Phaser.GameObjects.GameObject, ghostSprite: Phaser.GameObjects.Sprite): void {
+    private destroyGhost(ghost: Phaser.GameObjects.GameObject, ghostSprite: Phaser.Physics.Arcade.Sprite): void {
+        
+        // Check if the ghost is already being destroyed (has an active tween)
+        const existingTweens = this.tweens.getTweensOf(ghostSprite);
+        if (existingTweens.length > 0) {
+            return;
+        }
+        
+        // Ensure ghost count doesn't go below 0
+        if (this.ghost_count <= 0) {
+            this.ghost_count = Math.max(1, this.ghost_group.getChildren().length);
+        }
+        
         this.tweens.add({
             targets: ghostSprite,
             alpha: 0,
+            scale: 0,
             duration: 500,
             onComplete: () => {
-                ghost.destroy();
-                ghostSprite.destroy();
-                this.ghost_count--;
-                if(this.ghost_count === 0){
-                    this.spawnGhosts();
-                }
+                // Check if ghost still exists before destroying
+                if (ghost.active && ghostSprite.active) {
+                    ghost.destroy();
+                    this.ghost_count = Math.max(0, this.ghost_count - 1);
+                } 
             }
         });
     }
@@ -1863,6 +1903,43 @@ export class Game extends Scene {
         // Resume game
         this.time.timeScale = this.previousTimeScale;
         this.isDialogOpen = false;
+    }
+
+    /**
+     * Checks if a position is within the player's bright light zone
+     * @param x The x coordinate to check
+     * @param y The y coordinate to check
+     * @returns True if the position is in the bright light zone
+     */
+    private isInBrightLight(x: number, y: number): boolean {
+        // If flashlight battery is dead, nothing is in bright light
+        if (this.flashlightBattery <= 0) {
+            return false;
+        }
+        
+        // Calculate distance from player
+        const distanceToPlayer = Phaser.Math.Distance.Between(
+            x, y, this.player.x, this.player.y
+        );
+        
+        // Check if within bright light zone radius
+        if (distanceToPlayer > this.playerBrightLightZone) {
+            return false;
+        }
+        
+        // Calculate angle to position
+        const angleToPosition = Phaser.Math.Angle.Between(
+            this.player.x, this.player.y, x, y
+        );
+        
+        // Calculate angle difference with player's facing direction
+        const angleDiff = Phaser.Math.Angle.Wrap(angleToPosition - this.lastPlayerAngle);
+        
+        // Check if within flashlight cone (60 degrees)
+        const halfConeAngle = Phaser.Math.DegToRad(30);
+        const isInCone = Math.abs(angleDiff) <= halfConeAngle;
+        
+        return isInCone;
     }
 } 
 
