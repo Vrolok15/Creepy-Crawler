@@ -42,6 +42,7 @@ export class Game extends Scene {
     private playerDimLightZone: number = 400;
     private PLAYER_MAX_HIT_POINTS: number = 6;
     private playerHitPoints: number = this.PLAYER_MAX_HIT_POINTS;
+    private player_saved_hit_points: number;
     private playerLastHitTime: number = 0;
     private playerInvincibilityDuration: number = 1000;
     private lastPlayerAngle: number = 0; // Store the last known player direction
@@ -70,7 +71,7 @@ export class Game extends Scene {
     private health_sprite3!: Phaser.GameObjects.Sprite;
     private flashlight_sprite!: Phaser.GameObjects.Sprite;
     private flashlightBattery: number = 100;
-    private flashLightBatteryCycle: number = 1000; // 1 second
+    private flashLightBatteryCycle: number = 1000; // 0.5 second
     private flashLightBatteryCycleTimer: number = 0;
     private flashlightMaxDistance: number = 400;
     private flashlightMinDistance: number = 200;
@@ -466,6 +467,9 @@ export class Game extends Scene {
     }
 
     create() {
+        if(this.player_saved_hit_points > 0){
+            this.playerHitPoints = this.player_saved_hit_points;
+        }
         // Enable physics
         this.physics.world.setBounds(0, 0, this.GRID_SIZE * this.CELL_SIZE, this.GRID_SIZE * this.CELL_SIZE);
         
@@ -501,7 +505,9 @@ export class Game extends Scene {
         for (const room of this.rooms) {
             for (let y = room.y; y < room.y + room.height; y++) {
                 for (let x = room.x; x < room.x + room.width; x++) {
-                    this.roomTiles[y][x] = true;
+                    if(this.grid[y][x] && !this.roomTiles[y]){
+                        this.roomTiles[y][x] = true;
+                    }
                 }
             }
         }
@@ -587,14 +593,6 @@ export class Game extends Scene {
             this.input.on('pointerup', (pointer: Phaser.Input.Pointer) => {
                 if (pointer.button === 0) {
                     this.isMoving = false;
-                    this.player.setVelocity(0, 0);
-                }
-            });
-
-            // Add a handler for when pointer leaves game canvas
-            this.game.canvas.addEventListener('mouseout', () => {
-                this.isMoving = false;
-                if (this.player) {
                     this.player.setVelocity(0, 0);
                 }
             });
@@ -848,7 +846,7 @@ export class Game extends Scene {
                 const exitCenterY = this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2;
                 
                 // Stop any current movement and set small rightward velocity
-                this.player.setVelocity(20, 0); // Small constant rightward velocity
+                this.player.setVelocity(6, 0); // Small constant rightward velocity
                 this.isMoving = true;
                 this.lastDirection = 'right';
                 
@@ -999,6 +997,7 @@ export class Game extends Scene {
     }
 
     update(time: number, delta: number) {
+        this.player_saved_hit_points = this.playerHitPoints;
         // Skip update if dialog is open
         if (this.isDialogOpen) return;
         
@@ -1479,6 +1478,7 @@ export class Game extends Scene {
     private spawnGhosts(): void {
         // Clear any existing ghosts
         this.ghost_group.clear(true, true);
+        this.ghost_animation_delays = []; // Reset animation delays
         this.ghost_animation_delays = [];
         this.ghost_count = 0;
         
@@ -1495,30 +1495,32 @@ export class Game extends Scene {
             // Find a random position within the room (not too close to edges)
             const padding = 1; // Cells from the edge
             const x = Phaser.Math.Between(
-                room.x + padding, 
-                room.x + room.width - padding
+                room.x + padding * 2, 
+                room.x + room.width - padding * 2
             ) * this.CELL_SIZE + this.CELL_SIZE / 2;
 
             const y = Phaser.Math.Between(
-                room.y + padding, 
-                room.y + room.height - padding
+                room.y + padding * 2, 
+                room.y + room.height - padding * 2
             ) * this.CELL_SIZE + this.CELL_SIZE / 2;
 
-            if(Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < this.playerBrightLightZone || Phaser.Math.Distance.Between(x, y, this.entranceX, this.entranceY) < this.playerBrightLightZone)
+            if(Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < 200 || Phaser.Math.Distance.Between(x, y, this.entranceX, this.entranceY) < 200)
             {
                 continue;
             }
-            // Create ghost sprite
-            const ghost = this.ghost_group.create(x, y, 'ghost_1') as Phaser.Physics.Arcade.Sprite;
-            this.ghost_count++;
-            ghost.setDepth(5); // Above floor, below player
-            
-            // Set physics properties
-            ghost.setCollideWorldBounds(true);
-            ghost.setCircle(8); // Set circular hitbox
+            else{
+                // Create ghost sprite
+                const ghost = this.ghost_group.create(x, y, 'ghost_1') as Phaser.Physics.Arcade.Sprite;
+                this.ghost_count++;
+                ghost.setDepth(5); // Above floor, below player
+                
+                // Set physics properties
+                ghost.setCollideWorldBounds(true);
+                ghost.setCircle(8); // Set circular hitbox
 
-            // Set initial animation delay
-            this.ghost_animation_delays.push(Phaser.Math.Between(700, 1000));
+                // Set initial animation delay
+                this.ghost_animation_delays.push(Phaser.Math.Between(700, 1000));
+            }
         }
         
         // Set up collisions between ghosts and with player
