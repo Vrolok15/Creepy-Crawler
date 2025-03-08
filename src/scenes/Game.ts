@@ -38,6 +38,10 @@ export class Game extends Scene {
     private playerVisitedTiles: {x: number, y: number}[] = [];
     private playerBrightLightZone: number = 200;
     private playerDimLightZone: number = 400;
+    private PLAYER_MAX_HIT_POINTS: number = 6;
+    private playerHitPoints: number = this.PLAYER_MAX_HIT_POINTS;
+    private playerLastHitTime: number = 0;
+    private playerInvincibilityDuration: number = 1000;
     private lastPlayerAngle: number = 0; // Store the last known player direction
     private graphics!: Phaser.GameObjects.Graphics;
     private rooms: Room[] = [];
@@ -58,6 +62,10 @@ export class Game extends Scene {
     private currentFrame: number = 0; // 0 or 1 for alternating frames
 
     //gameplay variables
+    private health_sprite_group!: Phaser.GameObjects.Container;
+    private health_sprite!: Phaser.GameObjects.Sprite;
+    private health_sprite2!: Phaser.GameObjects.Sprite;
+    private health_sprite3!: Phaser.GameObjects.Sprite;
     private flashlight_sprite!: Phaser.GameObjects.Sprite;
     private flashlightBattery: number = 100;
     private flashLightBatteryCycle: number = 3000; // 3 seconds
@@ -95,6 +103,13 @@ export class Game extends Scene {
     private readonly BATTERY_METER_HEIGHT = 30;
     private readonly BATTERY_METER_PADDING = 5;
     private uiCamera!: Phaser.Cameras.Scene2D.Camera;
+
+    private dialogContainer!: Phaser.GameObjects.Container;
+    private dialogBackground!: Phaser.GameObjects.Graphics;
+    private dialogText!: Phaser.GameObjects.Text;
+    private dialogButton!: Phaser.GameObjects.Container;
+    private isDialogOpen: boolean = false;
+    private previousTimeScale: number = 1;
 
     constructor() {
         super({ key: 'Game' });
@@ -437,12 +452,15 @@ export class Game extends Scene {
         this.load.image('player_up_idle', 'assets/sprites/brother_stand_up.png');
         this.load.image('player_up_walk1', 'assets/sprites/brother_walk_up_1.png');
         this.load.image('player_up_walk2', 'assets/sprites/brother_walk_up_2.png');
-        this.load.image('player_death', 'assets/sprites/brother_skeleton.png');
+        this.load.image('player_dead', 'assets/sprites/brother_skeleton.png');
         this.load.image('flashlight', 'assets/sprites/flashlight.png');
         this.load.image('battery', 'assets/sprites/battery.png');
         this.load.image('battery_ui', 'assets/sprites/battery_ui.png');
         this.load.image('ghost_1', 'assets/sprites/ghost_1.png');
         this.load.image('ghost_2', 'assets/sprites/ghost_2.png');
+        this.load.image('heart_full', 'assets/sprites/heart_full.png');
+        this.load.image('heart_half', 'assets/sprites/heart_half.png');
+        this.load.image('heart_empty', 'assets/sprites/heart_empty.png');
     }
 
     create() {
@@ -616,6 +634,18 @@ export class Game extends Scene {
             }
         });
 
+        //create health sprites
+        this.health_sprite_group = this.add.container(100, this.scale.height - 35);
+        this.health_sprite = this.add.sprite(0, 0, 'heart_full');   
+        this.health_sprite2 = this.add.sprite(20, 0, 'heart_full');
+        this.health_sprite3 = this.add.sprite(40, 0, 'heart_full');
+        this.health_sprite_group.add(this.health_sprite);
+        this.health_sprite_group.add(this.health_sprite2);
+        this.health_sprite_group.add(this.health_sprite3);
+        this.health_sprite_group.setDepth(1000);
+        this.health_sprite_group.setScale(2);
+        this.cameras.main.ignore(this.health_sprite_group);
+
         // Add battery meter UI
         this.batteryMeterGraphics = this.add.graphics();
         this.flashlight_sprite = this.add.sprite(this.scale.width - 250, this.scale.height - 35, 'flashlight');
@@ -718,6 +748,14 @@ export class Game extends Scene {
             undefined, 
             this
         );
+
+        // Create dialog container (initially hidden)
+        this.createDialogSystem();
+        if(this.currentLevel === 1){
+            this.showDialog("Zack! Your sister Ashley is kidnapped by goblins! Find her and led her out of the dungeon until your flashlight runs out!", "Let's go!", () => {
+                console.log("Dialog closed!");
+            });
+        }
     }
 
     private updateTargetPosition(pointer: Phaser.Input.Pointer) {
@@ -964,6 +1002,9 @@ export class Game extends Scene {
     }
 
     update(time: number, delta: number) {
+        // Skip update if dialog is open
+        if (this.isDialogOpen) return;
+        
         // Process wall changes
         this.processWallChanges(time);
 
@@ -1160,6 +1201,8 @@ export class Game extends Scene {
             this.playerSprite.setPosition(this.player.x, this.player.y);
         }
 
+        this.updatePlayerAnimation(time);
+
         // Check for exit condition
         this.handleExit();
 
@@ -1169,9 +1212,6 @@ export class Game extends Scene {
         if (this.wallsToRemove.length === 0) {
             this.connectUnconnectedRooms();
         }
-
-        this.updatePlayerAnimation(time);
-
         // Update lighting mask
         if (this.player && this.player.body) {
             // ... existing lighting code ...
@@ -1187,6 +1227,12 @@ export class Game extends Scene {
     }
 
     updatePlayerAnimation(time: number) {
+        if(this.playerHitPoints <= 0){
+            this.playerSprite.setTexture('player_dead');
+            this.playerSprite.setAlpha(1);
+            this.playerSprite.setTint(0xffffff);
+            return;
+        }
         if (!this.player?.body || !this.playerSprite) return;
 
         const velocity = this.player.body.velocity;
@@ -1329,9 +1375,67 @@ export class Game extends Scene {
             // Update battery meter UI
             this.updateBatteryMeter();
         }
-        if (!this.isTransitioning) {
+        if (!this.isTransitioning && this.playerHitPoints > 0) {
             this.playerDimLightZone = this.flashlightMaxDistance * (this.flashlightBattery / 100);
             this.playerBrightLightZone = this.flashlightMinDistance * (this.flashlightBattery / 100);
+        }
+        if(this.playerHitPoints <= 0){
+            this.playerDimLightZone = 0;
+            this.playerBrightLightZone = 0;
+        }
+    }
+
+    private playerTakeDamage(): void {
+        this.playerHitPoints -= 1;
+        this.playerSprite.setAlpha(0.75);
+        this.playerSprite.setTint(0xff0000);
+        this.showPlayerEventText('Hit!', '#ff0000');
+        if(this.playerHitPoints == 5){
+            this.health_sprite3.setTexture('heart_half');
+        }
+        else if(this.playerHitPoints < 5){
+            this.health_sprite3.setTexture('heart_empty');
+        }
+        else{
+            this.health_sprite3.setTexture('heart_full');
+        }
+        if(this.playerHitPoints == 3){
+            this.health_sprite2.setTexture('heart_half');
+        }
+        else if(this.playerHitPoints < 3){
+            this.health_sprite2.setTexture('heart_empty');
+        }
+        else{
+            this.health_sprite2.setTexture('heart_full');
+        }
+        if(this.playerHitPoints == 1){
+            this.health_sprite.setTexture('heart_half');
+        }
+        else if(this.playerHitPoints < 1){
+            this.health_sprite.setTexture('heart_empty');
+        }
+        else{
+            this.health_sprite.setTexture('heart_full');
+        }
+        setTimeout(() => {
+            this.playerSprite.setAlpha(1);
+            this.playerSprite.setTint(0xffffff);
+        }, this.playerInvincibilityDuration);
+        if(this.playerHitPoints <= 0){
+            this.ghost_group.clear(true, true);
+            this.playerHitPoints = 0;
+            this.playerSprite.setTexture('player_dead');
+            this.tweens.add({
+                targets: this.cameras.main,
+                zoom: 30,
+                duration: 7000,
+                onComplete: () => {
+                    this.showDialog("You are dead! Game over!", "Darn...", () => {
+                        this.scene.start('MainMenu');
+                        this.playerHitPoints = this.PLAYER_MAX_HIT_POINTS;
+                    });
+                }
+            });
         }
     }
 
@@ -1364,6 +1468,9 @@ export class Game extends Scene {
                 room.y + room.height - padding
             ) * this.CELL_SIZE + this.CELL_SIZE / 2;
 
+            if(Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < this.playerBrightLightZone){
+                continue;
+            }
             // Create ghost sprite
             const ghost = this.ghost_group.create(x, y, 'ghost_1') as Phaser.Physics.Arcade.Sprite;
             this.ghost_count++;
@@ -1371,7 +1478,6 @@ export class Game extends Scene {
             
             // Set physics properties
             ghost.setCollideWorldBounds(true);
-            ghost.setBounce(0.5); // Add some bounce when colliding
             ghost.setCircle(8); // Set circular hitbox
             
             // Set initial position
@@ -1383,7 +1489,6 @@ export class Game extends Scene {
         
         // Set up collisions between ghosts and with player
         this.physics.add.collider(this.ghost_group, this.ghost_group);
-        this.physics.add.collider(this.player, this.ghost_group);
     }
 
     private updateGhosts(time: number): void {
@@ -1403,6 +1508,7 @@ export class Game extends Scene {
         // If ghost is within screen view, follow player
         this.ghost_group.getChildren().forEach(ghost => {
             const ghostSprite = ghost as Phaser.Physics.Arcade.Sprite;
+            this.uiCamera.ignore(ghostSprite);
             const distanceToPlayer = Phaser.Math.Distance.Between(
                 ghostSprite.x,
                 ghostSprite.y,
@@ -1420,17 +1526,38 @@ export class Game extends Scene {
                 const normalizedDx = dx / length;
                 const normalizedDy = dy / length;
                 
-                // Set velocity directly with speed of 100
-                const speed = 100;
+                // Set velocity directly with speed of 50
+                let speed = Math.max(50, 100 - distanceToPlayer / 10);
                 ghostSprite.setVelocity(normalizedDx * speed, normalizedDy * speed);
                 
-                // Debug log to verify movement
-                // console.log(`Ghost velocity: X=${normalizedDx * speed}, Y=${normalizedDy * speed}`);
+                if(distanceToPlayer < 10){
+                    if(time - this.playerLastHitTime > this.playerInvincibilityDuration){
+                        this.playerTakeDamage();
+                        this.playerLastHitTime = time;
+                        this.destroyGhost(ghost, ghostSprite);
+                    }
+                }
             } else {
                 // Stop moving if player is too far
                 ghostSprite.setVelocity(0, 0);
             }
         }); 
+    }
+
+    private destroyGhost(ghost: Phaser.GameObjects.GameObject, ghostSprite: Phaser.GameObjects.Sprite): void {
+        this.tweens.add({
+            targets: ghostSprite,
+            alpha: 0,
+            duration: 500,
+            onComplete: () => {
+                ghost.destroy();
+                ghostSprite.destroy();
+                this.ghost_count--;
+                if(this.ghost_count === 0){
+                    this.spawnGhosts();
+                }
+            }
+        });
     }
 
     private spawnBatteries(): void {
@@ -1540,6 +1667,202 @@ export class Game extends Scene {
         this.isGeneratingLevel = false;
         this.exitSequenceInProgress = false;
         this.transitionPromise = null;
+    }
+
+    /**
+     * Creates the dialog system components
+     */
+    private createDialogSystem(): void {
+        // Create container for all dialog elements
+        this.dialogContainer = this.add.container(0, 0);
+        this.dialogContainer.setDepth(2000); // Above everything
+        this.dialogContainer.setVisible(false);
+        
+        // Create semi-transparent background overlay
+        const overlay = this.add.rectangle(
+            0, 0, 
+            this.scale.width, this.scale.height, 
+            0x000000, 0.7
+        );
+        overlay.setOrigin(0, 0);
+        this.dialogContainer.add(overlay);
+        
+        // Create dialog background
+        this.dialogBackground = this.add.graphics();
+        this.dialogContainer.add(this.dialogBackground);
+        
+        // Create dialog text
+        this.dialogText = this.add.text(0, 0, '', {
+            fontSize: '24px',
+            color: '#ffffff',
+            align: 'center',
+            wordWrap: { width: 400 }
+        });
+        this.dialogText.setOrigin(0.5);
+        this.dialogContainer.add(this.dialogText);
+        
+        // Create button container
+        this.dialogButton = this.add.container(0, 0);
+        this.dialogContainer.add(this.dialogButton);
+        
+        // Make sure UI camera doesn't ignore dialog
+        if (this.uiCamera) {
+            // Don't ignore the dialog container
+            this.cameras.main.ignore(this.dialogContainer);
+        }
+    }
+    
+    /**
+     * Shows a dialog with the specified message and button text
+     * @param message The message to display
+     * @param buttonText The text for the button
+     * @param callback Function to call when the button is clicked
+     */
+    public showDialog(message: string, buttonText: string, callback: () => void): void {
+        if (this.isDialogOpen) return;
+        
+        // Pause the game
+        this.previousTimeScale = this.time.timeScale;
+        this.time.timeScale = 0;
+        this.isDialogOpen = true;
+        
+        // Set dialog text
+        this.dialogText.setText(message);
+        
+        // Calculate dialog size based on text
+        const padding = 40;
+        const dialogWidth = Math.max(400, this.dialogText.width + padding * 2);
+        const buttonHeight = 60;
+        const dialogHeight = this.dialogText.height + buttonHeight + padding * 3;
+        
+        // Position dialog in center of screen
+        const centerX = this.scale.width / 2;
+        const centerY = this.scale.height / 2;
+        
+        // Draw dialog background
+        this.dialogBackground.clear();
+        this.dialogBackground.fillStyle(0x000000, 1);
+        this.dialogBackground.fillRect(
+            centerX - dialogWidth / 2,
+            centerY - dialogHeight / 2,
+            dialogWidth,
+            dialogHeight
+        );
+        this.dialogBackground.lineStyle(4, 0xffffff, 1);
+        this.dialogBackground.strokeRect(
+            centerX - dialogWidth / 2,
+            centerY - dialogHeight / 2,
+            dialogWidth,
+            dialogHeight
+        );
+        
+        // Position text
+        this.dialogText.setPosition(centerX, centerY - buttonHeight / 2);
+        
+        // Clear previous button
+        this.dialogButton.removeAll(true);
+        
+        // Create button background
+        const buttonBackground = this.add.graphics();
+        buttonBackground.fillStyle(0x333333, 1);
+        buttonBackground.fillRect(
+            centerX - 100,
+            centerY + dialogHeight / 2 - buttonHeight - padding,
+            200,
+            buttonHeight
+        );
+        buttonBackground.lineStyle(2, 0xffffff, 1);
+        buttonBackground.strokeRect(
+            centerX - 100,
+            centerY + dialogHeight / 2 - buttonHeight - padding,
+            200,
+            buttonHeight
+        );
+        this.dialogButton.add(buttonBackground);
+        
+        // Create button text
+        const buttonTextObj = this.add.text(
+            centerX,
+            centerY + dialogHeight / 2 - buttonHeight / 2 - padding,
+            buttonText,
+            {
+                fontSize: '20px',
+                color: '#ffffff'
+            }
+        );
+        buttonTextObj.setOrigin(0.5);
+        this.dialogButton.add(buttonTextObj);
+        
+        // Create a clickable button zone
+        const buttonZone = this.add.zone(
+            centerX,
+            centerY + dialogHeight / 2 - buttonHeight / 2 - padding,
+            200,
+            buttonHeight
+        );
+        buttonZone.setInteractive();
+        buttonZone.setOrigin(0.5);
+        this.dialogButton.add(buttonZone);
+        
+        // Add hover effect
+        buttonZone.on('pointerover', () => {
+            buttonBackground.clear();
+            buttonBackground.fillStyle(0x555555, 1);
+            buttonBackground.fillRect(
+                centerX - 100,
+                centerY + dialogHeight / 2 - buttonHeight - padding,
+                200,
+                buttonHeight
+            );
+            buttonBackground.lineStyle(2, 0xffffff, 1);
+            buttonBackground.strokeRect(
+                centerX - 100,
+                centerY + dialogHeight / 2 - buttonHeight - padding,
+                200,
+                buttonHeight
+            );
+        });
+        
+        buttonZone.on('pointerout', () => {
+            buttonBackground.clear();
+            buttonBackground.fillStyle(0x333333, 1);
+            buttonBackground.fillRect(
+                centerX - 100,
+                centerY + dialogHeight / 2 - buttonHeight - padding,
+                200,
+                buttonHeight
+            );
+            buttonBackground.lineStyle(2, 0xffffff, 1);
+            buttonBackground.strokeRect(
+                centerX - 100,
+                centerY + dialogHeight / 2 - buttonHeight - padding,
+                200,
+                buttonHeight
+            );
+        });
+        
+        // Add click handler
+        buttonZone.on('pointerdown', () => {
+            this.closeDialog();
+            if (callback) callback();
+        });
+        
+        // Show dialog
+        this.dialogContainer.setVisible(true);
+    }
+    
+    /**
+     * Closes the dialog and resumes the game
+     */
+    private closeDialog(): void {
+        if (!this.isDialogOpen) return;
+        
+        // Hide dialog
+        this.dialogContainer.setVisible(false);
+        
+        // Resume game
+        this.time.timeScale = this.previousTimeScale;
+        this.isDialogOpen = false;
     }
 } 
 
