@@ -542,7 +542,7 @@ export class Game extends Scene {
         const levelData = levelGenerator.generateLevel();
         
         // Initialize grid and room data first
-        this.grid = levelGenerator.createGrid();
+        this.grid = levelData.grid;
         this.exitX = levelData.exitX;
         this.exitY = levelData.exitY;
         this.exitPoint = { x: this.exitX, y: this.exitY };
@@ -556,6 +556,7 @@ export class Game extends Scene {
                 for (let x = room.x; x < room.x + room.width; x++) {
                     if(this.grid[y][x] && !this.roomTiles[y]){
                         this.roomTiles[y][x] = true;
+                        this.grid[y][x] = false;
                     }
                 }
             }

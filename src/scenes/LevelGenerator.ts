@@ -72,6 +72,12 @@ export class LevelGenerator {
             height: this.config.gridSize
         };
 
+        for(let i = 0; i < this.config.gridSize; i++){
+            for(let j = 0; j < this.config.gridSize; j++){
+                this.grid[i][j] = true;
+            }
+        }
+
         // Split space into rooms
         this.splitNode(root, 0);
 
