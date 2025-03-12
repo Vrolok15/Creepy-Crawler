@@ -119,6 +119,16 @@ export class Game extends Scene {
     private transitionPromise: Promise<void> | null = null;
     private transitionStart: number = 0;
 
+    private note!: Phaser.Physics.Arcade.Sprite;
+    private noteText!: string;
+    private notes: string[] = [
+        "They've taken my wife! I've got to get her back from this place! \n\n The walls are shifting... seems like I need my flashlight to get through. \n\n [Use <Backspace> to change batteries]",
+        "They're here... I can hear them... \n\n They won't get me so easily! \n\n [Goblins are afraid of the bright light]",
+        "Are these explosives? \n\n Great, I can use them to blow the walls open! \n\n [Use <Enter> to plant bombs]",
+        "What are these noises? I swear I can hear them moaning... \n\n These must be poor souls trapped here like me! I see them in the dark... \n\n [Ghosts disappear in the bright light]",
+        "Thank god I've taken my photo camera with me! \n\n It seems like the flashlight is all it takes to scare them all away! \n\n [Use <Space> to take a photo]",
+    ]
+
     private readonly TRANSITION_DURATION = 2500; // 2500 second transition
     private readonly CAMERA_ZOOM_FACTOR = 1.5; // Less extreme zoom
 
@@ -513,6 +523,7 @@ export class Game extends Scene {
         this.load.image('player_up_walk1', 'assets/sprites/brother_walk_up_1.png');
         this.load.image('player_up_walk2', 'assets/sprites/brother_walk_up_2.png');
         this.load.image('player_dead', 'assets/sprites/brother_skeleton.png');
+        this.load.image('note', 'assets/sprites/note.png');
         this.load.image('flashlight', 'assets/sprites/flashlight.png');
         this.load.image('battery', 'assets/sprites/battery.png');
         this.load.image('battery_ui', 'assets/sprites/battery_ui.png');
@@ -2118,6 +2129,16 @@ export class Game extends Scene {
         
         // Get a shuffled copy of the rooms array to randomize placement
         const shuffledRooms = [...this.rooms].sort(() => Math.random() - 0.5);
+        const entranceRoom = this.rooms.find(room => 
+            room.x <= this.player.x / this.CELL_SIZE && 
+            room.x + room.width > this.player.x / this.CELL_SIZE && 
+            room.y <= this.player.y / this.CELL_SIZE && 
+            room.y + room.height > this.player.y / this.CELL_SIZE
+        );
+
+        if(this.notes.length > this.currentLevel && entranceRoom){
+            this.spawnItem(entranceRoom, "Note");
+        }
         
         // Spawn batteries in different rooms
         for (let i = 0; i < batteriesToSpawn && i < shuffledRooms.length; i++) {
@@ -2154,7 +2175,23 @@ export class Game extends Scene {
         if (itemType == "Battery") {
             item = this.batteries.create(x, y, 'battery') as Phaser.GameObjects.Sprite;
             this.battery_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
-        } else {
+        } 
+        else if (itemType == "Note") {
+            this.note = this.physics.add.sprite(x, y, 'note');
+            this.noteText = this.notes[this.currentLevel - 1];
+            this.note.setDepth(5);
+            item = this.note;
+            
+            this.physics.add.overlap(
+                this.player,
+                this.note,
+                this.readNote as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
+                undefined,
+                this
+            );
+            this.uiCamera.ignore(item);
+        }
+        else {
             item = this.keys.create(x, y, 'key') as Phaser.GameObjects.Sprite;
             this.key_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
         }
@@ -2175,6 +2212,13 @@ export class Game extends Scene {
             ease: 'Sine.easeInOut'
         });
     }
+
+    private readNote(): void {
+        this.showDialog(this.noteText, "Okay", () => {
+            this.note.destroy();
+        });
+    }
+    
 
     private addLockedDoor(x: number, y: number): void {
         // Create the locked door sprite
