@@ -105,6 +105,11 @@ export class Game extends Scene {
     private ghost_count: number = 0;
     private max_ghosts: number = 3;
 
+    private goblin_group!: Phaser.Physics.Arcade.Group;
+    private goblin_animation_delays: number[] = [];
+    private goblin_count: number = 0;
+    private max_goblins: number = 3;
+
     private isTransitioning: boolean = false;
     private isGeneratingLevel: boolean = false;
     private exitSequenceInProgress: boolean = false;
@@ -283,7 +288,9 @@ export class Game extends Scene {
         if (x > 1 && x < this.GRID_SIZE - 2 && y > 1 && y < this.GRID_SIZE - 2){
             var distanceToOtherDoors = 100;
             for (const position of this.lockedDoorPositions){
-                distanceToOtherDoors = Math.min(distanceToOtherDoors, Math.abs(position.x - x) + Math.abs(position.y - y));
+                if (position.x != x || position.y != y){
+                    distanceToOtherDoors = Math.min(distanceToOtherDoors, Math.abs(position.x - x) + Math.abs(position.y - y));
+                }
             }
             if (distanceToOtherDoors < 5){
                 return false;
@@ -507,6 +514,8 @@ export class Game extends Scene {
         this.load.image('battery_ui', 'assets/sprites/battery_ui.png');
         this.load.image('ghost_1', 'assets/sprites/ghost_1.png');
         this.load.image('ghost_2', 'assets/sprites/ghost_2.png');
+        this.load.image('goblin_1', 'assets/sprites/goblin_1.png');
+        this.load.image('goblin_2', 'assets/sprites/goblin_2.png');
         this.load.image('heart_full', 'assets/sprites/heart_full.png');
         this.load.image('heart_half', 'assets/sprites/heart_half.png');
         this.load.image('heart_empty', 'assets/sprites/heart_empty.png');
@@ -804,10 +813,16 @@ export class Game extends Scene {
             bounceY: 0.5,
             collideWorldBounds: true
         });
+
+        // Create goblin group with physics
+        this.goblin_group = this.physics.add.group({
+            bounceX: 0.5,
+            bounceY: 0.5,
+            collideWorldBounds: true        
+        });
         
         // After rooms are created and player is positioned
         this.spawnItems();
-        this.spawnGhosts();
 
         // Make sure batteries are ignored by UI camera but affected by the mask
         this.batteries.getChildren().forEach(battery => {
@@ -821,6 +836,10 @@ export class Game extends Scene {
 
         this.ghost_group.getChildren().forEach(ghost => {
             this.uiCamera.ignore(ghost);
+        });
+
+        this.goblin_group.getChildren().forEach(goblin => {
+            this.uiCamera.ignore(goblin);
         });
         
         // Add collision between player and batteries
@@ -854,7 +873,6 @@ export class Game extends Scene {
         this.createDialogSystem();
         if(this.currentLevel === 1){
             this.showDialog("Zack! Your sister Ashley is kidnapped by goblins! Find her and lead her out of the dungeon until your flashlight runs out!", "Let's go!", () => {
-                console.log("Dialog closed!");
             });
         }
     }
@@ -922,6 +940,7 @@ export class Game extends Scene {
         // Reset battery positions but keep the count
         this.battery_positions = [];
         this.ghost_animation_delays = [];
+        this.goblin_animation_delays = [];
         
         // Restart the scene to generate a new level
         this.scene.restart();
@@ -936,14 +955,13 @@ export class Game extends Scene {
         this.transitionPromise = new Promise<void>((resolve, reject) => {
             try {
                 this.isTransitioning = true;
-                console.log('Exit transition started');
 
                 // Center player on exit tile
                 const exitCenterX = this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2;
                 const exitCenterY = this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2;
                 
                 // Stop any current movement and set small rightward velocity
-                this.player.setVelocity(6, 0); // Small constant rightward velocity
+                this.player.setVelocity(2, 0); // Small constant rightward velocity
                 this.isMoving = true;
                 this.lastDirection = 'right';
                 
@@ -953,15 +971,11 @@ export class Game extends Scene {
 
                 let completedAnimations = 0;
                 const totalAnimations = 3;
-                const startTime = Date.now();
 
                 const checkComplete = () => {
                     completedAnimations++;
-                    const elapsed = Date.now() - startTime;
-                    console.log(`Animation completed: ${completedAnimations}/${totalAnimations} (${elapsed}ms)`);
                     
                     if (completedAnimations >= totalAnimations) {
-                        console.log('All animations completed, cleaning up');
                         resolve();
                     }
                 };
@@ -1012,7 +1026,6 @@ export class Game extends Scene {
 
         try {
             await this.transitionPromise;
-            console.log('Transition promise resolved');
         } finally {
             this.isTransitioning = false;
             this.transitionPromise = null;
@@ -1022,11 +1035,6 @@ export class Game extends Scene {
     private async handleExit() {
         // Prevent multiple exit sequences
         if (this.exitSequenceInProgress || this.isTransitioning || this.isGeneratingLevel) {
-            console.log('Exit sequence blocked:', {
-                exitSequenceInProgress: this.exitSequenceInProgress,
-                isTransitioning: this.isTransitioning,
-                isGeneratingLevel: this.isGeneratingLevel
-            });
             return;
         }
 
@@ -1039,17 +1047,13 @@ export class Game extends Scene {
                 this.isTransitioning = true;
                 this.isGeneratingLevel = true;
                 
-                console.log('Starting exit sequence');
-
                 await this.playExitTransition();
-                console.log('Transition animations completed');
+
 
                 await this.nextLevel();
-                console.log('New level generated');
 
                 await this.resetPlayerAndStates();
-                console.log('States reset completed');
-
+                
             } catch (error) {
                 console.error('Error during exit sequence:', error);
             } finally {
@@ -1058,7 +1062,6 @@ export class Game extends Scene {
                 this.isGeneratingLevel = false;
                 this.exitSequenceInProgress = false;
                 this.transitionPromise = null;
-                console.log('Exit sequence cleanup completed');
             }
         }
     }
@@ -1087,7 +1090,6 @@ export class Game extends Scene {
             
             // Wait for transitions to complete
             this.time.delayedCall(500, () => {
-                console.log('State reset completed');
                 resolve();
             });
         });
@@ -1168,6 +1170,7 @@ export class Game extends Scene {
         this.lightingMask.fill();
 
         this.updateGhosts(time);
+        this.updateGoblins(time);
 
         // Update player grid marker position
         const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
@@ -1562,7 +1565,6 @@ export class Game extends Scene {
         
         // Check for game over
         if(this.playerHitPoints <= 0){
-            this.ghost_group.clear(true, true);
             this.playerHitPoints = 0;
             this.playerSprite.setTexture('player_dead');
             this.tweens.add({
@@ -1578,6 +1580,241 @@ export class Game extends Scene {
             });
         }
     }
+
+    
+
+    private spawnGoblins(): void {
+        // Determine how many ghosts to spawn
+        const goblinsToSpawn = this.max_goblins - this.goblin_count;
+        
+        // Get a shuffled copy of the rooms array to randomize placement
+        const shuffledRooms = [...this.rooms].sort(() => Math.random() - 0.5);
+        
+        // Spawn goblins in different rooms
+        for (let i = 0; i < goblinsToSpawn && i < shuffledRooms.length; i++) {
+            const room = shuffledRooms[i];
+            
+            // Find a random position within the room (not too close to edges)
+            const padding = 1; // Cells from the edge
+            const x = Phaser.Math.Between(
+                room.x + padding * 2, 
+                room.x + room.width - padding * 2
+            ) * this.CELL_SIZE + this.CELL_SIZE / 2;
+
+            const y = Phaser.Math.Between(
+                room.y + padding * 2, 
+                room.y + room.height - padding * 2
+            ) * this.CELL_SIZE + this.CELL_SIZE / 2;
+
+            if(Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) < 200 || Phaser.Math.Distance.Between(x, y, this.entranceX, this.entranceY) < 200)
+            {
+                continue;
+            }
+            else{
+                // Create goblin sprite
+                const goblin = this.goblin_group.create(x, y, 'goblin_1') as Phaser.Physics.Arcade.Sprite;
+                this.goblin_count++;
+                goblin.setDepth(5); // Above floor, below player
+                goblin.setMask(this.mask);
+                this.physics.add.collider(goblin, this.wallGroup);
+                
+                // Set physics properties
+                goblin.setCollideWorldBounds(true);
+                goblin.setCircle(8); // Set circular hitbox
+
+                // Set initial animation delay
+                this.goblin_animation_delays.push(Phaser.Math.Between(700, 1000));
+            }
+        }
+        
+        // Set up collisions between goblins and with player
+        this.physics.add.collider(this.goblin_group, this.goblin_group);
+    }
+
+    private updateGoblins(time: number): void {
+        // Skip if no goblins
+        if (this.max_goblins == 0) {
+            return;
+        }
+        else if(this.goblin_count < this.max_goblins){  
+            this.spawnGoblins();
+        }
+        
+        // Ensure goblin_count matches actual count
+        if (this.goblin_count !== this.goblin_group.getChildren().length) {
+            this.goblin_count = this.goblin_group.getChildren().length;
+        }
+
+        for (let i = 0; i < this.goblin_count; i++) {
+            const goblin = this.goblin_group.getChildren()[i];
+            if (goblin) {
+                const delay = this.goblin_animation_delays[i];
+                const currentTime = time % delay;
+                if (currentTime < delay / 2) {
+                    (goblin as Phaser.GameObjects.Sprite).setTexture('goblin_1');
+                } else {
+                    (goblin as Phaser.GameObjects.Sprite).setTexture('goblin_2');
+                }
+            }
+        }
+        
+        // Collect goblins to destroy
+        const goblinsToDestroy: {goblin: Phaser.GameObjects.GameObject, sprite: Phaser.Physics.Arcade.Sprite}[] = [];
+        
+        // If goblin is within screen view, follow player
+        this.goblin_group.getChildren().forEach((goblin) => {
+            const goblinSprite = goblin as Phaser.Physics.Arcade.Sprite;
+            this.uiCamera.ignore(goblinSprite);
+            const distanceToPlayer = Phaser.Math.Distance.Between(
+                goblinSprite.x,
+                goblinSprite.y,
+                this.player.x,
+                this.player.y
+            );
+            
+            // Check if goblin is in bright light zone
+            const isInBrightLight = this.isInBrightLight(goblinSprite.x, goblinSprite.y);
+            
+            if (isInBrightLight) {
+                // Mark goblin for destruction if it's in bright light
+                goblinsToDestroy.push({goblin, sprite: goblinSprite});
+                goblin.active = false;
+                return; // Skip the rest of the logic for this goblin
+            }
+            
+            if (distanceToPlayer < 1000) {
+                // Calculate direction to player
+                const dx = this.player.x - goblinSprite.x;
+                const dy = this.player.y - goblinSprite.y;
+                
+                // Normalize the direction vector
+                const length = Math.sqrt(dx * dx + dy * dy);
+                const normalizedDx = dx / length;
+                const normalizedDy = dy / length;
+                
+                // Set velocity directly with speed of 50
+                let speed = Math.max(50, 100 - distanceToPlayer / 10);
+                goblinSprite.setVelocity(normalizedDx * speed, normalizedDy * speed);
+                
+                if(distanceToPlayer < 10 && goblin.active){
+                    if(time - this.playerLastHitTime > this.playerInvincibilityDuration){
+                        this.playerTakeDamage();
+                        this.playerLastHitTime = time;
+                        goblinsToDestroy.push({goblin, sprite: goblinSprite});
+                        return;
+                    }
+                }
+            } else {
+                //add random movement to the ghost
+                goblinSprite.setVelocity(Phaser.Math.Between(-10, 10), Phaser.Math.Between(-10, 10));
+            }
+        }); 
+        
+        
+        // Destroy collected ghosts after iteration
+        if (goblinsToDestroy.length > 0) {
+            goblinsToDestroy.forEach(({goblin, sprite}) => {
+                // Destroy the goblin
+                this.destroyGoblin(goblin, sprite);
+            });
+        }
+    }
+
+    private destroyGoblin(goblin: Phaser.GameObjects.GameObject, goblinSprite: Phaser.Physics.Arcade.Sprite): void {
+        
+        // Check if the goblin is already being destroyed (has an active tween)
+        const existingTweens = this.tweens.getTweensOf(goblinSprite);
+        if (existingTweens.length > 0) {
+            return;
+        }
+        
+        // Ensure ghost count doesn't go below 0
+        if (this.goblin_count <= 0) {
+            this.goblin_count = Math.max(1, this.goblin_group.getChildren().length);
+        }
+        
+        // Store the goblin's position since it will be destroyed
+        const goblinX = goblinSprite.x;
+        const goblinY = goblinSprite.y;
+        
+        // Create particle effect for ghost destruction
+        const particles = this.add.particles(goblinX, goblinY, 'goblin_1', {
+            speed: { min: 50, max: 150 },
+            scale: { start: 0.4, end: 0.1 },
+            alpha: { start: 0.8, end: 0 },
+            lifespan: 800,
+            blendMode: 'ADD',
+            quantity: 15,
+            rotate: { min: 0, max: 360 },
+            emitting: false
+        });
+        
+        // Make sure particles are affected by the lighting mask
+        if (this.mask) {
+            particles.setMask(this.mask);
+        }
+        
+        // Make sure UI camera ignores particles
+        if (this.uiCamera) {
+            this.uiCamera.ignore(particles);
+        }
+        
+        // Emit particles in a burst
+        particles.explode(20);
+        
+        // Add a flash effect
+        goblinSprite.setTint(0xFFFFFF);
+        
+        // Create a shockwave effect
+        const shockwave = this.add.graphics();
+        shockwave.setDepth(goblinSprite.depth - 1);
+        
+        // Make sure shockwave is affected by the lighting mask
+        if (this.mask) {
+            shockwave.setMask(this.mask);
+        }
+        
+        // Make sure UI camera ignores shockwave
+        if (this.uiCamera) {
+            this.uiCamera.ignore(shockwave);
+        }
+        
+        // Animate the shockwave
+        this.tweens.add({
+            targets: { radius: 0, alpha: 0.7 },
+            radius: 50,
+            alpha: 0,
+            duration: 500,
+            onUpdate: (tween, target) => {
+                shockwave.clear();
+                shockwave.lineStyle(3, 0xFFFFFF, target.alpha);
+                shockwave.strokeCircle(goblinX, goblinY, target.radius);
+            },
+            onComplete: () => {
+                shockwave.destroy();
+                goblin.destroy();
+                this.goblin_count = Math.max(0, this.goblin_count - 1);
+            }   
+        });
+        
+        // Animate the goblin fading away
+        this.tweens.add({
+            targets: goblinSprite,
+            alpha: 0,
+            scale: 0,
+            duration: 500,
+            onComplete: () => {
+                // Destroy the sprite
+                goblinSprite.destroy();
+                
+                // Set a timer to destroy particles after their lifespan
+                this.time.delayedCall(800, () => {
+                    particles.destroy();
+                });
+            }
+        });
+    }
+
 
     private spawnGhosts(): void {
         // Determine how many ghosts to spawn
@@ -1830,9 +2067,7 @@ export class Game extends Scene {
         const batteriesToSpawn = Phaser.Math.Between(
             this.MIN_BATTERIES_PER_LEVEL, 
             this.MAX_BATTERIES_PER_LEVEL
-        );
-        
-        console.log(`Spawning ${batteriesToSpawn} batteries`);
+        );  
         
         // Get a shuffled copy of the rooms array to randomize placement
         const shuffledRooms = [...this.rooms].sort(() => Math.random() - 0.5);
@@ -1935,13 +2170,11 @@ export class Game extends Scene {
         // Add collision with player
         this.physics.add.collider(this.player, lockedDoor);
         
-        console.log(`Added locked door at ${x}, ${y}`);
     }
 
     private removeLockedDoor(door: Phaser.Physics.Arcade.Sprite): void {
         door.destroy();
         this.lockedDoorPositions = this.lockedDoorPositions.filter(position => position.x !== door.x && position.y !== door.y);
-        console.log(`Removed locked door at ${door.x}, ${door.y}`);
     }
 
     private updateLockedDoors(): void {
@@ -1994,7 +2227,6 @@ export class Game extends Scene {
         // Increment battery count
         this.battery_count++;
         
-        console.log(`Battery collected! Total: ${this.battery_count}`);
         this.updateBatteriesUI();
         
         // Show pickup text
@@ -2011,7 +2243,6 @@ export class Game extends Scene {
         // Increment key count
         this.key_count++;
         
-        console.log(`Key collected! Total: ${this.key_count}`);
         this.updateKeysUI();
 
         // Show pickup text
