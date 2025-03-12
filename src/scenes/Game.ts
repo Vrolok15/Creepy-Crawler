@@ -103,6 +103,7 @@ export class Game extends Scene {
     private ghost_group!: Phaser.Physics.Arcade.Group;
     private ghost_animation_delays: number[] = [];
     private ghost_count: number = 0;
+    private max_ghosts: number = 3;
 
     private isTransitioning: boolean = false;
     private isGeneratingLevel: boolean = false;
@@ -1579,14 +1580,8 @@ export class Game extends Scene {
     }
 
     private spawnGhosts(): void {
-        // Clear any existing ghosts
-        this.ghost_group.clear(true, true);
-        this.ghost_animation_delays = []; // Reset animation delays
-        this.ghost_animation_delays = [];
-        this.ghost_count = 0;
-        
-        // Determine how many ghosts to spawn (1 per 3 rooms)
-        const ghostsToSpawn = Math.max(1, Math.floor(this.rooms.length / 3));
+        // Determine how many ghosts to spawn
+        const ghostsToSpawn = this.max_ghosts - this.ghost_count;
         
         // Get a shuffled copy of the rooms array to randomize placement
         const shuffledRooms = [...this.rooms].sort(() => Math.random() - 0.5);
@@ -1632,8 +1627,11 @@ export class Game extends Scene {
 
     private updateGhosts(time: number): void {
         // Skip if no ghosts
-        if (this.ghost_group.getChildren().length === 0) {
+        if (this.max_ghosts == 0) {
             return;
+        }
+        else if(this.ghost_count < this.max_ghosts){
+            this.spawnGhosts();
         }
         
         // Ensure ghost_count matches actual count
