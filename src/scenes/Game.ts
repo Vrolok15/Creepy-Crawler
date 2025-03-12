@@ -58,6 +58,7 @@ export class Game extends Scene {
     private levelGenerator!: LevelGenerator; // Store the generator for later use
     private lightingMask!: Phaser.GameObjects.Graphics; // For the lighting mask
     private mask!: Phaser.Display.Masks.BitmapMask; // The actual mask
+    private TOTAL_LEVELS: number = 9;
 
     private lastDirection: 'up' | 'down' | 'left' | 'right' = 'down';
     private frameTime: number = 0;
@@ -104,11 +105,13 @@ export class Game extends Scene {
     private ghost_animation_delays: number[] = [];
     private ghost_count: number = 0;
     private max_ghosts: number = 3;
+    private ghosts_per_level: number[] = [0, 0, 0, 1, 2, 3, 4, 5, 0];
 
     private goblin_group!: Phaser.Physics.Arcade.Group;
     private goblin_animation_delays: number[] = [];
     private goblin_count: number = 0;
     private max_goblins: number = 3;
+    private goblins_per_level: number[] = [0, 2, 3, 4, 5, 5, 5, 5, 10];
 
     private isTransitioning: boolean = false;
     private isGeneratingLevel: boolean = false;
@@ -499,6 +502,7 @@ export class Game extends Scene {
         // Load player sprites
         this.load.image('stair_up', 'assets/sprites/stair_up.png');
         this.load.image('stair_down', 'assets/sprites/stair_down.png');
+        this.load.image('sister', 'assets/sprites/sister_stand_down.png');
         this.load.image('player_down_idle', 'assets/sprites/brother_stand_down.png');
         this.load.image('player_down_walk1', 'assets/sprites/brother_walk_down_1.png');
         this.load.image('player_down_walk2', 'assets/sprites/brother_walk_down_2.png');
@@ -528,6 +532,10 @@ export class Game extends Scene {
         if(this.player_saved_hit_points > 0){
             this.playerHitPoints = this.player_saved_hit_points;
         }
+        
+        this.max_ghosts = this.ghosts_per_level[this.currentLevel - 1];
+        this.max_goblins = this.goblins_per_level[this.currentLevel - 1];
+
         // Enable physics
         this.physics.world.setBounds(0, 0, this.GRID_SIZE * this.CELL_SIZE, this.GRID_SIZE * this.CELL_SIZE);
         
@@ -585,10 +593,18 @@ export class Game extends Scene {
         stair_up.setScale(2);
         this.gridContainer.add(stair_up);
 
-        var stair_down = this.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'stair_down');
-        stair_down.setDepth(1);
-        stair_down.setScale(2);
-        this.gridContainer.add(stair_down);
+        if (this.currentLevel < this.TOTAL_LEVELS){
+            var stair_down = this.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'stair_down');
+            stair_down.setDepth(1);
+            stair_down.setScale(2);
+            this.gridContainer.add(stair_down);
+        }
+        else{
+            var sister_sprite = this.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'sister');
+            sister_sprite.setDepth(1);
+            sister_sprite.setScale(2);
+            this.gridContainer.add(sister_sprite);
+        }
 
         // Draw initial grid and create initial colliders
         this.redrawTile();
@@ -1448,6 +1464,10 @@ export class Game extends Scene {
             x + this.BATTERY_METER_WIDTH / 2 - this.batteryText.width / 2,
             y + this.BATTERY_METER_HEIGHT / 2 - this.batteryText.height / 2
         );
+
+        if(this.flashlightBattery <= 0 && this.battery_count <= 0){
+            this.max_ghosts = 10;
+        }
     }
 
     private updateBatteriesUI(){
@@ -1575,6 +1595,9 @@ export class Game extends Scene {
                     this.showDialog("You are dead! Game over!", "Darn...", () => {
                         this.scene.start('MainMenu');
                         this.playerHitPoints = this.PLAYER_MAX_HIT_POINTS;
+                        this.flashlightBattery = 100;
+                        this.battery_count = 0;
+                        this.key_count = 0;
                     });
                 }
             });
@@ -1937,7 +1960,7 @@ export class Game extends Scene {
                 return; // Skip the rest of the logic for this ghost
             }
             
-            if (distanceToPlayer < 1000) {
+            if ((distanceToPlayer < 1000 || this.flashlightBattery <= 0) && this.playerHitPoints > 0) {
                 // Calculate direction to player
                 const dx = this.player.x - ghostSprite.x;
                 const dy = this.player.y - ghostSprite.y;
