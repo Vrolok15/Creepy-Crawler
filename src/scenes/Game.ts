@@ -1676,13 +1676,6 @@ export class Game extends Scene {
             const isInBrightLight = this.isInBrightLight(goblinSprite.x, goblinSprite.y);
             
             if (isInBrightLight) {
-                // Mark goblin for destruction if it's in bright light
-                goblinsToDestroy.push({goblin, sprite: goblinSprite});
-                goblin.active = false;
-                return; // Skip the rest of the logic for this goblin
-            }
-            
-            if (distanceToPlayer < 1000) {
                 // Calculate direction to player
                 const dx = this.player.x - goblinSprite.x;
                 const dy = this.player.y - goblinSprite.y;
@@ -1694,9 +1687,40 @@ export class Game extends Scene {
                 
                 // Set velocity directly with speed of 50
                 let speed = Math.max(50, 100 - distanceToPlayer / 10);
-                goblinSprite.setVelocity(normalizedDx * speed, normalizedDy * speed);
-                
-                if(distanceToPlayer < 10 && goblin.active){
+                goblinSprite.setVelocity(normalizedDx * -speed * 2, normalizedDy * -speed * 2);
+                return; // Skip the rest of the logic for this goblin
+            }
+            else if (distanceToPlayer < 1000) {
+                const goblinGridX = Math.floor(goblinSprite.x / this.CELL_SIZE);
+                const goblinGridY = Math.floor(goblinSprite.y / this.CELL_SIZE);
+                var goblinTile = this.grid[goblinGridY][goblinGridX];
+
+                if(this.playerVisitedTiles.includes({x: goblinGridX, y: goblinGridY})){
+                    var currentTile = this.playerVisitedTiles.indexOf({x: goblinGridX, y: goblinGridY})
+                    //follow the path of visited tiles
+                    const tile = this.playerVisitedTiles[currentTile + 1];
+                    const dx = tile.x - goblinSprite.x;
+                    const dy = tile.y - goblinSprite.y;
+                    const length = Math.sqrt(dx * dx + dy * dy);
+                    const normalizedDx = dx / length;
+                    const normalizedDy = dy / length;
+                    goblinSprite.setVelocity(normalizedDx * 50, normalizedDy * 50);
+                }
+                else if(distanceToPlayer > 10 && goblin.active && !this.isTransitioning && this.playerHitPoints > 0){
+                    // Calculate direction to player
+                    const dx = this.player.x - goblinSprite.x;
+                    const dy = this.player.y - goblinSprite.y;
+                    
+                    // Normalize the direction vector
+                    const length = Math.sqrt(dx * dx + dy * dy);
+                    const normalizedDx = dx / length;
+                    const normalizedDy = dy / length;
+                    
+                    // Set velocity directly with speed of 50
+                    let speed = Math.max(50, 100 - distanceToPlayer / 10);
+                    goblinSprite.setVelocity(normalizedDx * speed, normalizedDy * speed);
+                }
+                else if(distanceToPlayer < 10 && goblin.active){
                     if(time - this.playerLastHitTime > this.playerInvincibilityDuration){
                         this.playerTakeDamage();
                         this.playerLastHitTime = time;
@@ -1927,7 +1951,7 @@ export class Game extends Scene {
                 let speed = Math.max(50, 100 - distanceToPlayer / 10);
                 ghostSprite.setVelocity(normalizedDx * speed, normalizedDy * speed);
                 
-                if(distanceToPlayer < 10 && ghost.active){
+                if(distanceToPlayer < 10 && ghost.active && !this.isTransitioning && this.playerHitPoints > 0){
                     if(time - this.playerLastHitTime > this.playerInvincibilityDuration){
                         this.playerTakeDamage();
                         this.playerLastHitTime = time;
