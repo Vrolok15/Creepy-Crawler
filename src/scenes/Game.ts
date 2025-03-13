@@ -229,8 +229,16 @@ export class Game extends Scene {
                         (x > 0 && y < this.GRID_SIZE - 1 && !this.grid[y+1][x-1]) || // bottom-left
                         (x < this.GRID_SIZE - 1 && y < this.GRID_SIZE - 1 && !this.grid[y+1][x+1]); // bottom-right
 
-                    if ((x == 0 || y == 0 || x == this.GRID_SIZE - 1 || y == this.GRID_SIZE - 1) || hasEmptyNeighbor) {
+                    let wall = false;
+                    if ((x == 0 || y == 0 || x == this.GRID_SIZE - 1 || y == this.GRID_SIZE - 1)){
+                        this.drawStraightTile(x, y);
+                        wall = true;
+                    }
+                    else if (hasEmptyNeighbor) {
                         this.drawJaggedTile(x, y);
+                        wall = true;
+                    }
+                    if (wall){
                         // Add a static body for collision
                         const wall = this.physics.add.staticImage(
                             x * this.CELL_SIZE + this.CELL_SIZE / 2,
@@ -245,6 +253,19 @@ export class Game extends Scene {
                 }
             }
         }
+    }
+
+    private drawStraightTile(x: number, y: number): void {
+        const baseX = x * this.CELL_SIZE;
+        const baseY = y * this.CELL_SIZE;
+        this.graphics.beginPath();
+        this.graphics.lineStyle(2, 0xFFFFFF);
+        this.graphics.moveTo(baseX, baseY);
+        this.graphics.lineTo(baseX + this.CELL_SIZE, baseY);
+        this.graphics.lineTo(baseX + this.CELL_SIZE, baseY + this.CELL_SIZE);
+        this.graphics.lineTo(baseX, baseY + this.CELL_SIZE);
+        this.graphics.closePath();
+        this.graphics.stroke();
     }
 
     private drawJaggedTile(x: number, y: number): void {
@@ -2349,18 +2370,168 @@ export class Game extends Scene {
 
     private bombExplode(position: {x: number, y: number, time: number, bomb: Phaser.GameObjects.Sprite}): void {
         position.bomb.destroy();
-        this.lightingMask.fillStyle(0xFFFFFF, 1);
-        this.lightingMask.beginPath();
-        this.lightingMask.moveTo(position.x, position.y);
-        this.lightingMask.arc(
-            position.x,
-            position.y,
-            this.bomb_explosion_radius,
-            0,
-            Phaser.Math.DegToRad(360)
+        
+        // Calculate explosion center coordinates in pixels
+        const centerX = position.x * this.CELL_SIZE + this.CELL_SIZE / 2;
+        const centerY = position.y * this.CELL_SIZE + this.CELL_SIZE / 2;
+        
+        // Add camera shake effect for more impact
+        this.cameras.main.shake(300, 0.01);
+        
+        // Create explosion visual effect
+        const explosion = this.add.graphics();
+        explosion.fillStyle(0xff8800, 0.8);
+        explosion.fillCircle(centerX, centerY, this.bomb_explosion_radius);
+        explosion.fillStyle(0xffff00, 0.6);
+        explosion.fillCircle(centerX, centerY, this.bomb_explosion_radius * 0.7);
+        explosion.fillStyle(0xffffff, 0.4);
+        explosion.fillCircle(centerX, centerY, this.bomb_explosion_radius * 0.4);
+        
+        // Make UI camera ignore explosion effect
+        this.uiCamera.ignore(explosion);
+        
+        // Create simple explosion particles using graphics instead of particle emitter
+        const particleCount = 20;
+        const particles: Phaser.GameObjects.Graphics[] = [];
+        
+        for (let i = 0; i < particleCount; i++) {
+            const particle = this.add.graphics();
+            const particleSize = Phaser.Math.Between(3, 8);
+            const angle = Math.random() * Math.PI * 2;
+            const distance = Math.random() * this.bomb_explosion_radius;
+            
+            const particleX = centerX + Math.cos(angle) * distance;
+            const particleY = centerY + Math.sin(angle) * distance;
+            
+            particle.fillStyle(0xffaa00, 0.8);
+            particle.fillCircle(particleX, particleY, particleSize);
+            
+            if (this.mask) {
+                particle.setMask(this.mask);
+            }
+            
+            this.uiCamera.ignore(particle);
+            particles.push(particle);
+            
+            // Animate each particle
+            this.tweens.add({
+                targets: particle,
+                alpha: 0,
+                x: particleX + Math.cos(angle) * 50,
+                y: particleY + Math.sin(angle) * 50,
+                duration: 500,
+                onComplete: () => {
+                    particle.destroy();
+                }
+            });
+        }
+        
+        // Fade out explosion effect
+        this.tweens.add({
+            targets: explosion,
+            alpha: 0,
+            duration: 500,
+            onComplete: () => {
+                explosion.destroy();
+            }
+        });
+        
+        // Check if player is within explosion radius
+        const distanceToPlayer = Phaser.Math.Distance.Between(
+            centerX, centerY, this.player.x, this.player.y
         );
-        this.lightingMask.closePath();
-        this.lightingMask.fill();
+        
+        if (distanceToPlayer <= this.bomb_explosion_radius) {
+            // Damage player if within explosion radius
+            this.playerTakeDamage();
+            
+            // Apply knockback force to player
+            const angle = Phaser.Math.Angle.Between(centerX, centerY, this.player.x, this.player.y);
+            const knockbackForce = 200;
+            const knockbackX = Math.cos(angle) * knockbackForce;
+            const knockbackY = Math.sin(angle) * knockbackForce;
+            this.player.setVelocity(knockbackX, knockbackY);
+            
+            // Show damage message
+            this.showPlayerEventText('Bomb Damage!', '#ff0000');
+        }
+        
+        // Destroy ghosts within explosion radius
+        this.ghost_group.getChildren().forEach((ghost) => {
+            const ghostSprite = ghost as Phaser.Physics.Arcade.Sprite;
+            const distanceToGhost = Phaser.Math.Distance.Between(
+                centerX, centerY, ghostSprite.x, ghostSprite.y
+            );
+            
+            if (distanceToGhost <= this.bomb_explosion_radius) {
+                this.destroyGhost(ghost, ghostSprite);
+                
+                // Show score or effect text
+                this.showPlayerEventText('+100', '#00ff00');
+            }
+        });
+        
+        // Destroy goblins within explosion radius
+        this.goblin_group.getChildren().forEach((goblin) => {
+            const goblinSprite = goblin as Phaser.Physics.Arcade.Sprite;
+            const distanceToGoblin = Phaser.Math.Distance.Between(
+                centerX, centerY, goblinSprite.x, goblinSprite.y
+            );
+            
+            if (distanceToGoblin <= this.bomb_explosion_radius) {
+                this.destroyGoblin(goblin, goblinSprite);
+                
+                // Show score or effect text
+                this.showPlayerEventText('+50', '#00ff00');
+            }
+        });
+        
+        // Remove walls within explosion radius
+        const gridRadius = Math.ceil(this.bomb_explosion_radius / this.CELL_SIZE);
+        
+        for (let y = position.y - gridRadius; y <= position.y + gridRadius; y++) {
+            for (let x = position.x - gridRadius; x <= position.x + gridRadius; x++) {
+                // Check if coordinates are within grid bounds
+                if (x >= 1 && x < this.GRID_SIZE - 1 && y >= 1 && y < this.GRID_SIZE - 1) {
+                    // Check if cell is within explosion radius
+                    const distanceToCell = Phaser.Math.Distance.Between(
+                        position.x, position.y, x, y
+                    );
+                    
+                    if (distanceToCell <= gridRadius) {
+                        // Don't destroy border walls
+                        if (x > 0 && y > 0 && x < this.GRID_SIZE - 1 && y < this.GRID_SIZE - 1) {
+                            // If it's a wall, remove it
+                            if (this.grid[y][x]) {
+                                this.removeTile(x, y);
+                            }
+                            
+                            // Check if there's a locked door here
+                            const doorPosition = this.lockedDoorPositions.find(
+                                door => door.x === x && door.y === y
+                            );
+                            
+                            if (doorPosition) {
+                                this.removeLockedDoor(doorPosition.door);
+                                
+                                // Show door destroyed message
+                                this.showPlayerEventText('Door Destroyed!', '#ffaa00');
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Update grid rendering after changes
+        this.redrawTile();
+        
+        // Decrease player's bomb count
+        this.bomb_count--;
+        this.updateBombsUI();
+        
+        // Play explosion sound effect (if available)
+        // this.sound.play('explosion');
     }
 
     private readNote(): void {
@@ -2758,6 +2929,29 @@ export class Game extends Scene {
         const isInCone = Math.abs(angleDiff) <= halfConeAngle;
         
         return isInCone;
+    }
+
+    /**
+     * Удаляет стену (устанавливает проходимую клетку) в указанной позиции сетки
+     * @param x X-координата в сетке
+     * @param y Y-координата в сетке
+     * @returns true если стена была удалена, false если клетка уже была проходимой
+     */
+    private removeTile(x: number, y: number): boolean {
+        // Проверяем, что координаты в пределах сетки
+        if (x < 0 || x >= this.GRID_SIZE || y < 0 || y >= this.GRID_SIZE) {
+            return false;
+        }
+        
+        // Проверяем, есть ли стена в этой клетке
+        if (!this.grid[y][x]) {
+            return false; // Клетка уже проходимая
+        }
+        
+        // Удаляем стену (устанавливаем проходимую клетку)
+        this.grid[y][x] = false;
+        
+        return true;
     }
 } 
 
