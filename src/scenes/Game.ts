@@ -65,6 +65,10 @@ export class Game extends Scene {
     private frameDuration: number = 150; // Adjust this to control animation speed (in milliseconds)
     private currentFrame: number = 0; // 0 or 1 for alternating frames
 
+    private sister_cry_frame: number = 1;
+    private sister_time: number = 0;
+    private sister_sprite!: Phaser.GameObjects.Sprite;
+
     //gameplay variables
     private health_sprite_group!: Phaser.GameObjects.Container;
     private health_sprite!: Phaser.GameObjects.Sprite;
@@ -171,6 +175,10 @@ export class Game extends Scene {
     private readonly BATTERY_METER_PADDING = 5;
     private uiCamera!: Phaser.Cameras.Scene2D.Camera;
 
+    // Timer properties
+    private gameTimer: number = 0;
+    private timerText!: Phaser.GameObjects.Text;
+    
     private dialogContainer!: Phaser.GameObjects.Container;
     private dialogBackground!: Phaser.GameObjects.Graphics;
     private dialogText!: Phaser.GameObjects.Text;
@@ -566,6 +574,12 @@ export class Game extends Scene {
         this.load.image('stair_up', 'assets/sprites/stair_up.png');
         this.load.image('stair_down', 'assets/sprites/stair_down.png');
         this.load.image('sister', 'assets/sprites/sister_stand_down.png');
+        this.load.image('sister_cry1', 'assets/sprites/sister_cry_1.png');
+        this.load.image('sister_cry2', 'assets/sprites/sister_cry_2.png');
+        this.load.image('sister_cry3', 'assets/sprites/sister_cry_3.png');
+        this.load.image('sister_cry4', 'assets/sprites/sister_cry_4.png');
+        this.load.image('sister_cry5', 'assets/sprites/sister_cry_5.png');
+        this.load.image('sister_cry6', 'assets/sprites/sister_cry_6.png');
         this.load.image('player_down_idle', 'assets/sprites/brother_stand_down.png');
         this.load.image('player_down_walk1', 'assets/sprites/brother_walk_down_1.png');
         this.load.image('player_down_walk2', 'assets/sprites/brother_walk_down_2.png');
@@ -673,9 +687,9 @@ export class Game extends Scene {
             this.gridContainer.add(stair_down);
         }
         else{
-            var sister_sprite = this.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'sister');
-            sister_sprite.setDepth(1);
-            this.gridContainer.add(sister_sprite);
+            this.sister_sprite = this.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'sister');
+            this.sister_sprite.setDepth(1);
+            this.gridContainer.add(this.sister_sprite);
         }
 
         // Draw initial grid and create initial colliders
@@ -709,19 +723,38 @@ export class Game extends Scene {
         this.cameras.main.setZoom(2);
 
         // Add level counter
-        this.levelText = this.add.text(16, 16, `Level: ${this.currentLevel}`, {
-            fontSize: '32px',
-            color: '#ffffff',
+        this.levelText = this.add.text(20, 20, `Level: ${this.currentLevel}`, {
+            fontFamily: 'Arial',
             backgroundColor: '#000000',
             padding: {
                 left: 10,
                 right: 10,
                 top: 5,
                 bottom: 5
-            }
+            },
+            fontSize: '24px',
+            color: '#ffffff'
         });
         this.levelText.setScrollFactor(0);
-
+        this.levelText.setDepth(100);
+        
+        // Create timer text in the upper right corner
+        this.timerText = this.add.text(this.scale.width - 20, 20, '00:00', {
+            fontFamily: 'Arial',
+            backgroundColor: '#000000',
+            padding: {
+                left: 10,
+                right: 10,
+                top: 5,
+                bottom: 5
+            },
+            fontSize: '24px',
+            color: '#ffffff'
+        });
+        this.timerText.setOrigin(1, 0); // Align right
+        this.timerText.setScrollFactor(0);
+        this.timerText.setDepth(100);
+        
         if (!this.isTransitioning){
             // Setup mouse input
             this.input.on('pointerdown', (pointer: Phaser.Input.Pointer) => {
@@ -1036,6 +1069,20 @@ export class Game extends Scene {
         return playerGridX === this.exitX && playerGridY === this.exitY;
     }
 
+    private updateSisterSprite(delta: number): void {
+        if(this.sister_sprite){
+            this.sister_time += delta;
+            if(this.sister_time > this.frameDuration / 2){
+                this.sister_time = 0;
+                this.sister_cry_frame++;
+                if(this.sister_cry_frame > 6){
+                    this.sister_cry_frame = 1;
+                }
+            }
+            this.sister_sprite.setTexture('sister_cry' + this.sister_cry_frame);
+        }
+    }
+
     private nextLevel(): void {
         this.currentLevel++;
         
@@ -1087,6 +1134,9 @@ export class Game extends Scene {
         this.battery_positions = [];
         this.ghost_animation_delays = [];
         this.goblin_animation_delays = [];
+        
+        // Reset timer
+        this.gameTimer = 0;
         
         // Restart the scene to generate a new level
         this.scene.restart();
@@ -1186,7 +1236,7 @@ export class Game extends Scene {
 
         const isAtExit = this.checkExitReached();
 
-        if (isAtExit) {
+        if (isAtExit && this.currentLevel != this.TOTAL_LEVELS) {
             try {
                 // Set all state flags at once to prevent race conditions
                 this.exitSequenceInProgress = true;
@@ -1209,6 +1259,11 @@ export class Game extends Scene {
                 this.exitSequenceInProgress = false;
                 this.transitionPromise = null;
             }
+        }
+        else if (isAtExit && this.currentLevel == this.TOTAL_LEVELS) {
+            this.showDialog("You've saved your sister, Zack! \n\n You are a hero! \n\n Total time: " + this.timerText.text, "Restart", () => {
+                this.scene.start('MainMenu');
+            });
         }
     }
 
@@ -1242,8 +1297,18 @@ export class Game extends Scene {
     }
 
     update(time: number, delta: number) {
+
+        // Skip update if dialog is open
+        if (this.isDialogOpen) return;
+
         this.CAN_SPAWN = time - this.camera_last_used > this.camera_spawn_delay;
 
+        // Update game timer (convert delta from ms to seconds)
+        this.gameTimer += delta / 1000;
+        this.updateTimerDisplay();
+
+        this.updateSisterSprite(delta);
+        
         this.bomb_delay_timer += delta;
         if(this.bomb_delay_timer > this.bomb_delay){
             this.updateBombsActive();
@@ -1251,8 +1316,6 @@ export class Game extends Scene {
         }
         
         this.player_saved_hit_points = this.playerHitPoints;
-        // Skip update if dialog is open
-        if (this.isDialogOpen) return;
         
         // Process wall changes
         this.processWallChanges(time);
@@ -3075,6 +3138,18 @@ export class Game extends Scene {
         this.grid[y][x] = false;
         
         return true;
+    }
+
+    // Format and update the timer display
+    private updateTimerDisplay(): void {
+        const minutes = Math.floor(this.gameTimer / 60);
+        const seconds = Math.floor(this.gameTimer % 60);
+        
+        // Format as MM:SS with leading zeros
+        const formattedMinutes = minutes.toString().padStart(2, '0');
+        const formattedSeconds = seconds.toString().padStart(2, '0');
+        
+        this.timerText.setText(`${formattedMinutes}:${formattedSeconds}`);
     }
 } 
 
