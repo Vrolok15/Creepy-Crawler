@@ -78,7 +78,7 @@ export class Game extends Scene {
     private flashlightMinDistance: number = 200;
 
     private battery_sprite!: Phaser.GameObjects.Sprite;
-    private battery_count: number = 0;
+    private battery_count: number = 1;
     private battery_positions: {x: number, y: number}[] = [];
     private batteries!: Phaser.Physics.Arcade.Group;
     private batteryCountText!: Phaser.GameObjects.Text;
@@ -98,7 +98,9 @@ export class Game extends Scene {
     private lockedDoorPositions: {x: number, y: number, door: Phaser.Physics.Arcade.Sprite}[] = [];
     private lockedDoors!: Phaser.Physics.Arcade.StaticGroup;
     private unlockedDoors: number = 0;
-    private MAX_LOCKED_DOORS_PER_LEVEL: number = 5;
+    private MAX_LOCKED_DOORS: number = 5;
+    private locked_doors_per_level: number[] = [0, 0, 2, 3, 4, 4, 4, 5, 5];
+
 
     //enemy variables
     private ghost_group!: Phaser.Physics.Arcade.Group;
@@ -124,6 +126,7 @@ export class Game extends Scene {
     private notes: string[] = [
         "They've taken my wife! I've got to get her back from this place! \n\n The walls are shifting... seems like I need my flashlight to get through. \n\n [Use <Backspace> to change batteries]",
         "They're here... I can hear them... \n\n They won't get me so easily! \n\n [Goblins are afraid of the bright light]",
+        "There are these locked doors... \n\n I need to find the keys to open them! \n\n [Use keys to unlock doors]",
         "Are these explosives? \n\n Great, I can use them to blow the walls open! \n\n [Use <Enter> to plant bombs]",
         "What are these noises? I swear I can hear them moaning... \n\n These must be poor souls trapped here like me! I see them in the dark... \n\n [Ghosts disappear in the bright light]",
         "Thank god I've taken my photo camera with me! \n\n It seems like the flashlight is all it takes to scare them all away! \n\n [Use <Space> to take a photo]",
@@ -211,7 +214,7 @@ export class Game extends Scene {
                         (x > 0 && y < this.GRID_SIZE - 1 && !this.grid[y+1][x-1]) || // bottom-left
                         (x < this.GRID_SIZE - 1 && y < this.GRID_SIZE - 1 && !this.grid[y+1][x+1]); // bottom-right
 
-                    if (hasEmptyNeighbor) {
+                    if ((x == 0 || y == 0 || x == this.GRID_SIZE - 1 || y == this.GRID_SIZE - 1) || hasEmptyNeighbor) {
                         this.drawJaggedTile(x, y);
                         // Add a static body for collision
                         const wall = this.physics.add.staticImage(
@@ -367,7 +370,7 @@ export class Game extends Scene {
                             }
                             this.grid[point.y][point.x] = false;
                             if (this.isValidLockedDoorPosition(point.x, point.y)){
-                                if (this.unlockedDoors + this.lockedDoors.getChildren().length < this.MAX_LOCKED_DOORS_PER_LEVEL){
+                                if (this.unlockedDoors + this.lockedDoors.getChildren().length < this.MAX_LOCKED_DOORS){
                                     this.addLockedDoor(point.x, point.y);
                                 }
                             }
@@ -382,7 +385,7 @@ export class Game extends Scene {
                 const point = this.wallsToRemove.shift()!;
                 this.grid[point.y][point.x] = false;
                 if (this.isValidLockedDoorPosition(point.x, point.y)){
-                    if (this.unlockedDoors + this.lockedDoors.getChildren().length < this.MAX_LOCKED_DOORS_PER_LEVEL){
+                    if (this.unlockedDoors + this.lockedDoors.getChildren().length < this.MAX_LOCKED_DOORS){
                         this.addLockedDoor(point.x, point.y);
                     }
                 }
@@ -546,6 +549,7 @@ export class Game extends Scene {
         
         this.max_ghosts = this.ghosts_per_level[this.currentLevel - 1];
         this.max_goblins = this.goblins_per_level[this.currentLevel - 1];
+        this.MAX_LOCKED_DOORS = this.locked_doors_per_level[this.currentLevel - 1];
 
         // Enable physics
         this.physics.world.setBounds(0, 0, this.GRID_SIZE * this.CELL_SIZE, this.GRID_SIZE * this.CELL_SIZE);
@@ -583,7 +587,7 @@ export class Game extends Scene {
         for (const room of this.rooms) {
             for (let y = room.y; y < room.y + room.height; y++) {
                 for (let x = room.x; x < room.x + room.width; x++) {
-                    if(this.grid[y][x] && !this.roomTiles[y]){
+                    if(this.grid && this.grid[y] && this.grid[y][x] && !this.roomTiles[y]){
                         this.roomTiles[y][x] = true;
                         this.grid[y][x] = false;
                     }
@@ -1258,13 +1262,7 @@ export class Game extends Scene {
             this.rechargeTimer += delta;
             
             if (this.rechargeTimer >= this.rechargeInterval) {
-                this.rechargeTimer = 0;
-                this.battery_count -= 1;
-                this.updateBatteriesUI();
-                this.flashlightBattery = 100; // Recharge to full
-                
-                // Show recharge text
-                this.showPlayerEventText('Recharge');
+                this.useBattery();
             }
         } else {
             // Reset timer if key is released
@@ -1339,6 +1337,16 @@ export class Game extends Scene {
                 });
             }
         }
+    }
+
+    private useBattery(){
+        this.rechargeTimer = 0;
+        this.battery_count -= 1;
+        this.updateBatteriesUI();
+        this.flashlightBattery = 100; // Recharge to full
+        
+        // Show recharge text
+        this.showPlayerEventText('Recharge');
     }
 
     updatePlayerAnimation(time: number) {
@@ -1476,8 +1484,12 @@ export class Game extends Scene {
             y + this.BATTERY_METER_HEIGHT / 2 - this.batteryText.height / 2
         );
 
-        if(this.flashlightBattery <= 0 && this.battery_count <= 0){
-            this.max_ghosts = 10;
+        if(this.flashlightBattery <= 0){
+            if(this.battery_count > 0){
+                this.useBattery();
+            }else{
+                this.max_ghosts = 10;
+            }
         }
     }
 
