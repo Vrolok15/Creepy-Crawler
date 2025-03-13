@@ -110,6 +110,17 @@ export class Game extends Scene {
     private readonly MAX_BOMBS_PER_LEVEL = 3;
     private readonly MIN_BOMBS_PER_LEVEL = 1;
 
+    private camera_sprite!: Phaser.GameObjects.Sprite;
+    private camera_items!: Phaser.Physics.Arcade.Group;
+    private camera_items_positions: {x: number, y: number}[] = [];
+    private camera_count: number = 0;
+    private camera_count_text!: Phaser.GameObjects.Text;
+    private camera_spawn_delay: number = 10000;
+    private camera_last_used: number = 0;
+    private CAN_SPAWN: boolean = true;
+    private MAX_CAMERA_COUNT: number = 2;
+    private MIN_CAMERA_COUNT: number = 1;
+
     private lockedDoorPositions: {x: number, y: number, door: Phaser.Physics.Arcade.Sprite}[] = [];
     private lockedDoors!: Phaser.Physics.Arcade.StaticGroup;
     private unlockedDoors: number = 0;
@@ -122,13 +133,13 @@ export class Game extends Scene {
     private ghost_animation_delays: number[] = [];
     private ghost_count: number = 0;
     private max_ghosts: number = 3;
-    private ghosts_per_level: number[] = [0, 0, 0, 1, 2, 3, 4, 5, 0];
+    private ghosts_per_level: number[] = [0, 0, 0, 1, 2, 4, 6, 8, 10];
 
     private goblin_group!: Phaser.Physics.Arcade.Group;
     private goblin_animation_delays: number[] = [];
     private goblin_count: number = 0;
     private max_goblins: number = 3;
-    private goblins_per_level: number[] = [0, 2, 3, 4, 5, 5, 5, 5, 10];
+    private goblins_per_level: number[] = [0, 2, 3, 4, 5, 6, 7, 8, 10];
 
     private isTransitioning: boolean = false;
     private isGeneratingLevel: boolean = false;
@@ -581,6 +592,8 @@ export class Game extends Scene {
         this.load.image('bomb_active_3', 'assets/sprites/bomb_active_3.png');
         this.load.image('bomb_inactive', 'assets/sprites/bomb_inactive.png');
         this.load.image('bomb_ui', 'assets/sprites/bomb_ui.png');
+        this.load.image('camera', 'assets/sprites/camera.png');
+        this.load.image('camera_ui', 'assets/sprites/camera_ui.png');
     }
 
     create() {
@@ -828,6 +841,18 @@ export class Game extends Scene {
             padding: { left: 12, right: 12, top: 6, bottom: 6 }
         });
 
+        // Add camera sprite and count text
+        this.camera_sprite = this.add.sprite(this.scale.width - 650, this.scale.height - 35, 'camera_ui');
+        this.camera_sprite.setDepth(1000);
+        this.camera_sprite.setScale(2);
+        this.camera_count_text = this.add.text(this.scale.width - 620, this.scale.height - 50, '0', {
+            fontSize: '22px',   
+            fontStyle: 'bold',
+            color: '#ffffff',
+            backgroundColor: '#000000',
+            padding: { left: 12, right: 12, top: 6, bottom: 6 }
+        });
+        
         // Create a camera for UI elements that doesn't zoom
         this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
         this.uiCamera.setScroll(0, 0);
@@ -874,6 +899,8 @@ export class Game extends Scene {
         this.cameras.main.ignore(this.keyCountText);
         this.cameras.main.ignore(this.bomb_sprite);
         this.cameras.main.ignore(this.bombCountText);
+        this.cameras.main.ignore(this.camera_sprite);
+        this.cameras.main.ignore(this.camera_count_text);
 
 
         // Update the battery meter position based on game size
@@ -895,7 +922,8 @@ export class Game extends Scene {
         this.keys = this.physics.add.group();
         this.bombs = this.physics.add.group();
         this.bombs_active = this.physics.add.group();
-        
+        this.camera_items = this.physics.add.group();
+
         // Create ghost group with physics
         this.ghost_group = this.physics.add.group({
             bounceX: 0.5,
@@ -926,6 +954,10 @@ export class Game extends Scene {
         // Make bombs ignored by UI camera but affected by the mask
         this.bombs.getChildren().forEach(bomb => {
             this.uiCamera.ignore(bomb);
+        });
+
+        this.camera_items.getChildren().forEach(camera_item => {
+            this.uiCamera.ignore(camera_item);
         });
 
         this.ghost_group.getChildren().forEach(ghost => {
@@ -963,6 +995,14 @@ export class Game extends Scene {
             this
         );
 
+        // Add collision between player and camera items
+        this.physics.add.overlap(
+            this.player,
+            this.camera_items,
+            this.handleCameraItemCollection as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
+            undefined,
+            this
+        );
         // Add collision between player and locked doors
         this.physics.add.overlap(
             this.player,
@@ -1199,6 +1239,8 @@ export class Game extends Scene {
     }
 
     update(time: number, delta: number) {
+        this.CAN_SPAWN = time - this.camera_last_used > this.camera_spawn_delay;
+
         this.bomb_delay_timer += delta;
         if(this.bomb_delay_timer > this.bomb_delay){
             this.updateBombsActive();
@@ -1351,7 +1393,6 @@ export class Game extends Scene {
         if(!this.isTransitioning && this.input.keyboard && this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER).isDown && this.bomb_count > 0){
             this.bomb_placement_delay_timer += delta;
             if(this.bomb_placement_delay_timer >= this.bomb_placement_delay){
-                console.log("Placing bomb");
                 if(this.bomb_active_positions.filter(position => position.x === this.player.x && position.y === this.player.y).length == 0){
                     this.placeBomb();
                     this.bomb_placement_delay_timer = 0;
@@ -1359,6 +1400,13 @@ export class Game extends Scene {
             }
         } else {
             this.bomb_placement_delay_timer = this.bomb_placement_delay;
+        }
+
+        //handle camera usage
+        if(!this.isTransitioning && this.input.keyboard && this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.SPACE).isDown && this.camera_count > 0){
+            if(this.CAN_SPAWN){
+                this.useCamera(time);
+            }
         }
 
         // Handle movement
@@ -1408,6 +1456,7 @@ export class Game extends Scene {
         this.updatePlayerAnimation(time);
         this.updateKeysUI();
         this.updateBombsUI();
+        this.updateCameraUI();
 
         // Check for exit condition
         this.handleExit();
@@ -1594,7 +1643,7 @@ export class Game extends Scene {
 
     private updateKeysUI(){
         this.key_sprite.setVisible(this.key_count > 0);
-        this.keyCountText.setVisible(this.key_count > 0);
+        this.keyCountText.setVisible(this.key_count > 0);   
         this.keyCountText.setText(`${this.key_count}`);
     }
 
@@ -1602,6 +1651,12 @@ export class Game extends Scene {
         this.bomb_sprite.setVisible(this.bomb_count > 0);
         this.bombCountText.setVisible(this.bomb_count > 0);
         this.bombCountText.setText(`${this.bomb_count}`);
+    }
+
+    private updateCameraUI(){
+        this.camera_count_text.setText(`${this.camera_count}`);
+        this.camera_sprite.setVisible(this.camera_count > 0);
+        this.camera_count_text.setVisible(this.camera_count > 0);
     }
 
     private updateFlashlight(time: number) {
@@ -1721,6 +1776,7 @@ export class Game extends Scene {
                         this.battery_count = 0;
                         this.key_count = 0;
                         this.bomb_count = 0;
+                        this.camera_count = 0;
                     });
                 }
             });
@@ -1730,6 +1786,9 @@ export class Game extends Scene {
     
 
     private spawnGoblins(): void {
+        if(!this.CAN_SPAWN){
+            return;
+        }
         // Determine how many ghosts to spawn
         const goblinsToSpawn = this.max_goblins - this.goblin_count;
         
@@ -1987,6 +2046,9 @@ export class Game extends Scene {
 
 
     private spawnGhosts(): void {
+        if(!this.CAN_SPAWN){
+            return;
+        }
         // Determine how many ghosts to spawn
         const ghostsToSpawn = this.max_ghosts - this.ghost_count;
         
@@ -2228,6 +2290,10 @@ export class Game extends Scene {
         this.keys.clear(true, true);
         this.key_positions = [];
 
+        // Clear any existing camera items
+        this.camera_items.clear(true, true);
+        this.camera_items_positions = [];
+
         // Clear any existing bombs
         this.bombs.clear(true, true);
         this.bomb_positions = [];
@@ -2240,6 +2306,11 @@ export class Game extends Scene {
         const bombsToSpawn = Phaser.Math.Between(
             this.MIN_BOMBS_PER_LEVEL, 
             this.MAX_BOMBS_PER_LEVEL
+        );
+
+        const cameraItemsToSpawn = Phaser.Math.Between(
+            this.MIN_CAMERA_COUNT, 
+            this.MAX_CAMERA_COUNT
         );
         
         // Determine how many batteries to spawn (between MIN and MAX)
@@ -2284,6 +2355,14 @@ export class Game extends Scene {
                 this.spawnItem(room, "Bomb");
             }
         }
+
+        // Spawn camera items in different rooms
+        for (let i = 0; i < cameraItemsToSpawn && i < shuffledRooms.length; i++) {
+            const room = shuffledRooms.pop();
+            if (room) {
+                this.spawnItem(room, "Camera");
+            }
+        }
     }
 
     private spawnItem(room: Room, itemType: string): void {
@@ -2323,6 +2402,10 @@ export class Game extends Scene {
         else if (itemType == "Bomb") {
             item = this.bombs.create(x, y, 'bomb_inactive') as Phaser.GameObjects.Sprite;
             this.bomb_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
+        }
+        else if (itemType == "Camera") {
+            item = this.camera_items.create(x, y, 'camera') as Phaser.GameObjects.Sprite;
+            this.camera_items_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
         }
         else {
             item = this.keys.create(x, y, 'key') as Phaser.GameObjects.Sprite;
@@ -2677,6 +2760,16 @@ export class Game extends Scene {
         this.showPlayerEventText('+1 Key');
     }
 
+    private handleCameraItemCollection(
+        _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
+        obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
+    ): void {
+        obj2.destroy();
+        this.camera_count++;
+        this.updateCameraUI();
+        this.showPlayerEventText('+1 Camera');
+    }
+
     private handleLockedDoorInteraction(
         _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
         obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
@@ -2688,6 +2781,28 @@ export class Game extends Scene {
             this.showPlayerEventText('Unlocked!');
             this.unlockedDoors++;
         } 
+    }
+
+    private useCamera(time: number): void {
+        this.camera_last_used = time;
+        this.camera_count--;
+        this.updateCameraUI();
+        //create white rectangle to cover the screen
+        const whiteRectangle = this.add.rectangle(0, 0, 100000 , 100000, 0xffffff, 1);
+        // Camera doesn't have an add method, we use the scene's add method instead
+        this.cameras.main.ignore(whiteRectangle);
+        this.tweens.add({
+            targets: whiteRectangle,
+            alpha: 0,
+            duration: this.camera_spawn_delay,
+            onComplete: () => {
+                whiteRectangle.destroy();
+            }
+        });
+
+        //remove all ghosts and goblins
+        this.ghost_group.clear(true, true);
+        this.goblin_group.clear(true, true);
     }
 
     // Add cleanup method for scene shutdown
