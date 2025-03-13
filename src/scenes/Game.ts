@@ -99,7 +99,7 @@ export class Game extends Scene {
     private bombs!: Phaser.Physics.Arcade.Group;
     private bombs_active!: Phaser.Physics.Arcade.Group;
     private bomb_active_positions: {x: number, y: number, time: number, bomb: Phaser.GameObjects.Sprite}[] = [];
-    private bomb_count: number = 3;
+    private bomb_count: number = 0;
     private bombCountText!: Phaser.GameObjects.Text;
     private bomb_positions: {x: number, y: number}[] = [];
     private bomb_delay: number = 500;
@@ -153,9 +153,12 @@ export class Game extends Scene {
         "They've taken my wife! I've got to get her back from this place! \n\n The walls are shifting... seems like I need my flashlight to get through. \n\n [Use <Backspace> to change batteries]",
         "They're here... I can hear them... \n\n They won't get me so easily! \n\n [Goblins are afraid of the bright light]",
         "There are these locked doors... \n\n I need to find the keys to open them! \n\n [Use keys to unlock doors]",
-        "Are these explosives? \n\n Great, I can use them to blow the walls open! \n\n [Use <Enter> to plant bombs]",
         "What are these noises? I swear I can hear them moaning... \n\n These must be poor souls trapped here like me! I see them in the dark... \n\n [Ghosts disappear in the bright light]",
+        "Are these explosives? \n\n Great, I can use them to blow the walls open! \n\n [Use <Enter> to plant bombs]",
         "Thank god I've taken my photo camera with me! \n\n It seems like the flashlight is all it takes to scare them all away! \n\n [Use <Space> to take a photo]",
+        "I feel like I'm getting close... \n\n Where is my wife?",
+        "I've heard her cry! \n\n I need to find her before it's too late! \n\n Hope that we both can make it out of here!",
+        "[You find two hugging skeletons]"
     ]
 
     private readonly TRANSITION_DURATION = 2500; // 2500 second transition
@@ -574,6 +577,7 @@ export class Game extends Scene {
         this.load.image('player_up_walk2', 'assets/sprites/brother_walk_up_2.png');
         this.load.image('player_dead', 'assets/sprites/brother_skeleton.png');
         this.load.image('note', 'assets/sprites/note.png');
+        this.load.image('hugging_skeletons', 'assets/sprites/hugging_skeletons.png');
         this.load.image('flashlight', 'assets/sprites/flashlight.png');
         this.load.image('battery', 'assets/sprites/battery.png');
         this.load.image('battery_ui', 'assets/sprites/battery_ui.png');
@@ -671,7 +675,6 @@ export class Game extends Scene {
         else{
             var sister_sprite = this.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'sister');
             sister_sprite.setDepth(1);
-            sister_sprite.setScale(2);
             this.gridContainer.add(sister_sprite);
         }
 
@@ -2385,7 +2388,12 @@ export class Game extends Scene {
             this.battery_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
         } 
         else if (itemType == "Note") {
-            this.note = this.physics.add.sprite(x, y, 'note');
+            if(this.notes.length > this.currentLevel){
+                this.note = this.physics.add.sprite(x, y, 'note');
+            }
+            else{
+                this.note = this.physics.add.sprite(x, y, 'hugging_skeletons');
+            }
             this.noteText = this.notes[this.currentLevel - 1];
             this.note.setDepth(5);
             item = this.note;
