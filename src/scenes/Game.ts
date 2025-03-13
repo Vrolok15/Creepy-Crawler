@@ -83,7 +83,7 @@ export class Game extends Scene {
     private batteries!: Phaser.Physics.Arcade.Group;
     private batteryCountText!: Phaser.GameObjects.Text;
     private rechargeTimer: number = 0;
-    private rechargeInterval: number = 2000; // 10 seconds
+    private rechargeInterval: number = 2000;
     private readonly MAX_BATTERIES_PER_LEVEL = 3;
     private readonly MIN_BATTERIES_PER_LEVEL = 1;
 
@@ -94,6 +94,21 @@ export class Game extends Scene {
     private key_positions: {x: number, y: number}[] = [];
     private readonly MAX_KEYS_PER_LEVEL = 3;
     private readonly MIN_KEYS_PER_LEVEL = 1;
+
+    private bomb_sprite!: Phaser.GameObjects.Sprite;
+    private bombs!: Phaser.Physics.Arcade.Group;
+    private bombs_active!: Phaser.Physics.Arcade.Group;
+    private bomb_active_positions: {x: number, y: number, time: number, bomb: Phaser.GameObjects.Sprite}[] = [];
+    private bomb_count: number = 3;
+    private bombCountText!: Phaser.GameObjects.Text;
+    private bomb_positions: {x: number, y: number}[] = [];
+    private bomb_delay: number = 500;
+    private bomb_delay_timer: number = 0;
+    private bomb_explosion_radius: number = 100;
+    private bomb_placement_delay: number = 1000;
+    private bomb_placement_delay_timer: number = 0;
+    private readonly MAX_BOMBS_PER_LEVEL = 3;
+    private readonly MIN_BOMBS_PER_LEVEL = 1;
 
     private lockedDoorPositions: {x: number, y: number, door: Phaser.Physics.Arcade.Sprite}[] = [];
     private lockedDoors!: Phaser.Physics.Arcade.StaticGroup;
@@ -540,6 +555,11 @@ export class Game extends Scene {
         this.load.image('locked_door', 'assets/sprites/locked_door.png');
         this.load.image('key', 'assets/sprites/key.png');
         this.load.image('key_ui', 'assets/sprites/key_ui.png');
+        this.load.image('bomb_active_1', 'assets/sprites/bomb_active_1.png');
+        this.load.image('bomb_active_2', 'assets/sprites/bomb_active_2.png');
+        this.load.image('bomb_active_3', 'assets/sprites/bomb_active_3.png');
+        this.load.image('bomb_inactive', 'assets/sprites/bomb_inactive.png');
+        this.load.image('bomb_ui', 'assets/sprites/bomb_ui.png');
     }
 
     create() {
@@ -775,6 +795,18 @@ export class Game extends Scene {
             padding: { left: 12, right: 12, top: 6, bottom: 6 }
         });
 
+        // Add bomb sprite and count text
+        this.bomb_sprite = this.add.sprite(this.scale.width - 550, this.scale.height - 35, 'bomb_ui');
+        this.bomb_sprite.setDepth(1000);
+        this.bomb_sprite.setScale(2);
+        this.bombCountText = this.add.text(this.scale.width - 520, this.scale.height - 50, '0', {
+            fontSize: '22px',
+            fontStyle: 'bold',
+            color: '#ffffff',
+            backgroundColor: '#000000',
+            padding: { left: 12, right: 12, top: 6, bottom: 6 }
+        });
+
         // Create a camera for UI elements that doesn't zoom
         this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
         this.uiCamera.setScroll(0, 0);
@@ -819,6 +851,9 @@ export class Game extends Scene {
         this.cameras.main.ignore(this.batteryCountText);
         this.cameras.main.ignore(this.key_sprite);
         this.cameras.main.ignore(this.keyCountText);
+        this.cameras.main.ignore(this.bomb_sprite);
+        this.cameras.main.ignore(this.bombCountText);
+
 
         // Update the battery meter position based on game size
         const resize = () => {
@@ -837,6 +872,8 @@ export class Game extends Scene {
         this.lockedDoors = this.physics.add.staticGroup();
         this.batteries = this.physics.add.group();
         this.keys = this.physics.add.group();
+        this.bombs = this.physics.add.group();
+        this.bombs_active = this.physics.add.group();
         
         // Create ghost group with physics
         this.ghost_group = this.physics.add.group({
@@ -865,6 +902,11 @@ export class Game extends Scene {
             this.uiCamera.ignore(key);
         });
 
+        // Make bombs ignored by UI camera but affected by the mask
+        this.bombs.getChildren().forEach(bomb => {
+            this.uiCamera.ignore(bomb);
+        });
+
         this.ghost_group.getChildren().forEach(ghost => {
             this.uiCamera.ignore(ghost);
         });
@@ -887,6 +929,15 @@ export class Game extends Scene {
             this.player,
             this.keys,
             this.handleKeyCollection as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
+            undefined,
+            this
+        );
+
+        // Add collision between player and bombs
+        this.physics.add.overlap(
+            this.player,
+            this.bombs,
+            this.handleBombCollection as Phaser.Types.Physics.Arcade.ArcadePhysicsCallback,
             undefined,
             this
         );
@@ -1127,6 +1178,12 @@ export class Game extends Scene {
     }
 
     update(time: number, delta: number) {
+        this.bomb_delay_timer += delta;
+        if(this.bomb_delay_timer > this.bomb_delay){
+            this.updateBombsActive();
+            this.bomb_delay_timer = 0;
+        }
+        
         this.player_saved_hit_points = this.playerHitPoints;
         // Skip update if dialog is open
         if (this.isDialogOpen) return;
@@ -1269,6 +1326,20 @@ export class Game extends Scene {
             this.rechargeTimer = this.rechargeInterval;
         }
 
+        //Handle bomb placement
+        if(!this.isTransitioning && this.input.keyboard && this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ENTER).isDown && this.bomb_count > 0){
+            this.bomb_placement_delay_timer += delta;
+            if(this.bomb_placement_delay_timer >= this.bomb_placement_delay){
+                console.log("Placing bomb");
+                if(this.bomb_active_positions.filter(position => position.x === this.player.x && position.y === this.player.y).length == 0){
+                    this.placeBomb();
+                    this.bomb_placement_delay_timer = 0;
+                }
+            }
+        } else {
+            this.bomb_placement_delay_timer = this.bomb_placement_delay;
+        }
+
         // Handle movement
         if (!this.isTransitioning && this.isMoving && this.input.activePointer.isDown && this.input.activePointer.button === 0) {
             // Calculate distance to target
@@ -1315,6 +1386,7 @@ export class Game extends Scene {
 
         this.updatePlayerAnimation(time);
         this.updateKeysUI();
+        this.updateBombsUI();
 
         // Check for exit condition
         this.handleExit();
@@ -1505,6 +1577,12 @@ export class Game extends Scene {
         this.keyCountText.setText(`${this.key_count}`);
     }
 
+    private updateBombsUI(){
+        this.bomb_sprite.setVisible(this.bomb_count > 0);
+        this.bombCountText.setVisible(this.bomb_count > 0);
+        this.bombCountText.setText(`${this.bomb_count}`);
+    }
+
     private updateFlashlight(time: number) {
         this.updateBatteriesUI();
         if(time - this.flashLightBatteryCycleTimer > this.flashLightBatteryCycle) {
@@ -1621,6 +1699,7 @@ export class Game extends Scene {
                         this.flashlightBattery = 100;
                         this.battery_count = 0;
                         this.key_count = 0;
+                        this.bomb_count = 0;
                     });
                 }
             });
@@ -2128,9 +2207,18 @@ export class Game extends Scene {
         this.keys.clear(true, true);
         this.key_positions = [];
 
+        // Clear any existing bombs
+        this.bombs.clear(true, true);
+        this.bomb_positions = [];
+
         const keysToSpawn = Phaser.Math.Between(
             this.MIN_KEYS_PER_LEVEL, 
             this.MAX_KEYS_PER_LEVEL
+        );
+
+        const bombsToSpawn = Phaser.Math.Between(
+            this.MIN_BOMBS_PER_LEVEL, 
+            this.MAX_BOMBS_PER_LEVEL
         );
         
         // Determine how many batteries to spawn (between MIN and MAX)
@@ -2165,6 +2253,14 @@ export class Game extends Scene {
             const room = shuffledRooms.pop();
             if (room) {
                 this.spawnItem(room, "Key");
+            }
+        }
+
+        // Spawn bombs in different rooms
+        for (let i = 0; i < bombsToSpawn && i < shuffledRooms.length; i++) {
+            const room = shuffledRooms.pop();
+            if (room) {
+                this.spawnItem(room, "Bomb");
             }
         }
     }
@@ -2203,6 +2299,10 @@ export class Game extends Scene {
             );
             this.uiCamera.ignore(item);
         }
+        else if (itemType == "Bomb") {
+            item = this.bombs.create(x, y, 'bomb_inactive') as Phaser.GameObjects.Sprite;
+            this.bomb_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
+        }
         else {
             item = this.keys.create(x, y, 'key') as Phaser.GameObjects.Sprite;
             this.key_positions.push({x: Math.floor(x / this.CELL_SIZE), y: Math.floor(y / this.CELL_SIZE)});
@@ -2223,6 +2323,44 @@ export class Game extends Scene {
             repeat: -1,
             ease: 'Sine.easeInOut'
         });
+    }
+
+    private placeBomb(): void {
+        console.log("Placing bomb");
+        let bomb: Phaser.GameObjects.Sprite;
+        bomb = this.bombs_active.create(this.player.x, this.player.y, 'bomb_active_1') as Phaser.GameObjects.Sprite;
+        bomb.setDepth(5);
+        this.uiCamera.ignore(bomb);
+        this.bomb_active_positions.push({x: Math.floor(this.player.x / this.CELL_SIZE), y: Math.floor(this.player.y / this.CELL_SIZE), time: 1, bomb: bomb});
+    }
+
+    private updateBombsActive(): void {
+        for (const position of this.bomb_active_positions){
+            position.time++;
+            if(position.time > 3){
+                this.bombExplode(position);
+            }
+            else{
+                position.bomb.setTexture('bomb_active_' + position.time);
+            }
+        }
+        this.bomb_active_positions = this.bomb_active_positions.filter(p => p.time <= 3);
+    }
+
+    private bombExplode(position: {x: number, y: number, time: number, bomb: Phaser.GameObjects.Sprite}): void {
+        position.bomb.destroy();
+        this.lightingMask.fillStyle(0xFFFFFF, 1);
+        this.lightingMask.beginPath();
+        this.lightingMask.moveTo(position.x, position.y);
+        this.lightingMask.arc(
+            position.x,
+            position.y,
+            this.bomb_explosion_radius,
+            0,
+            Phaser.Math.DegToRad(360)
+        );
+        this.lightingMask.closePath();
+        this.lightingMask.fill();
     }
 
     private readNote(): void {
@@ -2334,6 +2472,22 @@ export class Game extends Scene {
         
         // Show pickup text
         this.showPlayerEventText('+1 Battery');
+    }
+
+    private handleBombCollection(
+        _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
+        obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
+    ): void {
+        // Remove the bomb from the scene (obj2 is the bomb)
+        obj2.destroy();
+
+        // Increment bomb count
+        this.bomb_count++;
+        
+        this.updateBombsUI();
+
+        // Show pickup text
+        this.showPlayerEventText('+1 Bomb');
     }
 
     private handleKeyCollection(
