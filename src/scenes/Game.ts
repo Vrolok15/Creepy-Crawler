@@ -1,5 +1,5 @@
 import { Scene } from 'phaser';
-import { LevelGenerator } from './LevelGenerator';
+import { LevelData, LevelGenerator } from './LevelGenerator';
 
 interface Room {
     x: number;
@@ -15,7 +15,7 @@ interface Point {
 
 export class Game extends Scene {
     private grid: boolean[][] = [];
-    private readonly GRID_SIZE = 50;
+    private readonly GRID_SIZE = 30;
     private readonly CELL_SIZE = 32;
     private player!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
     private playerSprite!: Phaser.GameObjects.Sprite;
@@ -59,6 +59,8 @@ export class Game extends Scene {
     private lightingMask!: Phaser.GameObjects.Graphics; // For the lighting mask
     private mask!: Phaser.Display.Masks.BitmapMask; // The actual mask
     private TOTAL_LEVELS: number = 9;
+    private level_layouts: LevelData[] = [];
+    private GOING_BACK: boolean;
 
     private lastDirection: 'up' | 'down' | 'left' | 'right' = 'down';
     private frameTime: number = 0;
@@ -67,7 +69,9 @@ export class Game extends Scene {
 
     private sister_cry_frame: number = 1;
     private sister_time: number = 0;
+    private sister_game_object!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
     private sister_sprite!: Phaser.GameObjects.Sprite;
+    private sister_following: boolean;
 
     //gameplay variables
     private health_sprite_group!: Phaser.GameObjects.Container;
@@ -187,7 +191,10 @@ export class Game extends Scene {
     private previousTimeScale: number = 1;
 
     constructor() {
-        super({ key: 'Game' });
+        super('Game');
+        this.player_saved_hit_points = this.PLAYER_MAX_HIT_POINTS;
+        this.GOING_BACK = false;
+        this.sister_following = false;
     }
 
     private findSafeSpot(currentX: number, currentY: number): Point | null {
@@ -256,7 +263,7 @@ export class Game extends Scene {
                         this.drawStraightTile(x, y);
                         wall = true;
                     }
-                    else if (hasEmptyNeighbor) {
+                    else {
                         this.drawJaggedTile(x, y);
                         wall = true;
                     }
@@ -573,7 +580,15 @@ export class Game extends Scene {
         // Load player sprites
         this.load.image('stair_up', 'assets/sprites/stair_up.png');
         this.load.image('stair_down', 'assets/sprites/stair_down.png');
-        this.load.image('sister', 'assets/sprites/sister_stand_down.png');
+        this.load.image('sister_down_idle', 'assets/sprites/sister_stand_down.png');
+        this.load.image('sister_down_walk1', 'assets/sprites/sister_walk_down_1.png');
+        this.load.image('sister_down_walk2', 'assets/sprites/sister_walk_down_2.png');
+        this.load.image('sister_left_idle', 'assets/sprites/sister_stand_side.png');
+        this.load.image('sister_left_walk1', 'assets/sprites/sister_walk_side_1.png');
+        this.load.image('sister_left_walk2', 'assets/sprites/sister_walk_side_2.png');
+        this.load.image('sister_up_idle', 'assets/sprites/sister_stand_up.png');
+        this.load.image('sister_up_walk1', 'assets/sprites/sister_walk_up_1.png');
+        this.load.image('sister_up_walk2', 'assets/sprites/sister_walk_up_2.png');
         this.load.image('sister_cry1', 'assets/sprites/sister_cry_1.png');
         this.load.image('sister_cry2', 'assets/sprites/sister_cry_2.png');
         this.load.image('sister_cry3', 'assets/sprites/sister_cry_3.png');
@@ -615,6 +630,17 @@ export class Game extends Scene {
     }
 
     create() {
+        // Retrieve state from registry if available
+        if (this.registry.has('GOING_BACK')) {
+            this.GOING_BACK = this.registry.get('GOING_BACK');
+        }
+        if (this.registry.has('sister_following')) {
+            this.sister_following = this.registry.get('sister_following');
+        }
+        if (this.registry.has('currentLevel')) {
+            this.currentLevel = this.registry.get('currentLevel');
+        }
+        
         if(this.player_saved_hit_points > 0){
             this.playerHitPoints = this.player_saved_hit_points;
         }
@@ -634,7 +660,7 @@ export class Game extends Scene {
         this.lightingMask = this.add.graphics();
         this.lightingMask.setDepth(1);
         this.mask = new Phaser.Display.Masks.BitmapMask(this, this.lightingMask);
-
+        
         // Generate level using LevelGenerator with configuration
         const levelGenerator = new LevelGenerator({
             gridSize: this.GRID_SIZE,
@@ -644,10 +670,20 @@ export class Game extends Scene {
             roomPadding: 1,
             splitRandomness: 0.25
         });
-        const levelData = levelGenerator.generateLevel();
+
+        let levelData: LevelData;
+        if(this.GOING_BACK){
+            levelData = this.level_layouts[this.currentLevel - 1];
+        }
+        else{
+            levelData = levelGenerator.generateLevel();
+            this.level_layouts.push(levelData);
+        }
         
         // Initialize grid and room data first
         this.grid = levelData.grid;
+        this.entranceX = levelData.entranceX;
+        this.entranceY = levelData.entranceY;
         this.exitX = levelData.exitX;
         this.exitY = levelData.exitY;
         this.exitPoint = { x: this.exitX, y: this.exitY };
@@ -674,8 +710,6 @@ export class Game extends Scene {
 
         // Create entrance and exit markers
         var stair_up = this.add.sprite(levelData.entranceX * this.CELL_SIZE + this.CELL_SIZE / 2, levelData.entranceY * this.CELL_SIZE + this.CELL_SIZE / 2, 'stair_up');
-        this.entranceX = levelData.entranceX;
-        this.entranceY = levelData.entranceY;
         stair_up.setDepth(1);
         stair_up.setScale(2);
         this.gridContainer.add(stair_up);
@@ -686,21 +720,42 @@ export class Game extends Scene {
             stair_down.setScale(2);
             this.gridContainer.add(stair_down);
         }
-        else{
-            this.sister_sprite = this.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'sister');
-            this.sister_sprite.setDepth(1);
-            this.gridContainer.add(this.sister_sprite);
+        if(this.GOING_BACK || this.currentLevel == this.TOTAL_LEVELS){
+            this.sister_sprite = this.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'sister_down_idle');
+            this.sister_game_object = this.physics.add.sprite(this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2, this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2, 'sister');
+            this.sister_game_object.setVisible(false);
+            console.log(this.sister_game_object);
+            console.log(this.sister_sprite);
+            console.log("Placed sister at: " + this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2 + ", " + this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2);
+            this.sister_sprite.setDepth(1000);
+            this.sister_sprite.setMask(this.mask);
+            
+            // Make sure sister_following is set correctly
+            if (this.GOING_BACK) {
+                this.sister_following = true;
+            }
         }
 
         // Draw initial grid and create initial colliders
         this.redrawTile();
 
         // Create player with physics
-        const playerX = levelData.entranceX * this.CELL_SIZE + this.CELL_SIZE / 2;
-        const playerY = levelData.entranceY * this.CELL_SIZE + this.CELL_SIZE / 2;
+        let playerX = levelData.entranceX * this.CELL_SIZE + this.CELL_SIZE / 2;
+        let playerY = levelData.entranceY * this.CELL_SIZE + this.CELL_SIZE / 2;
+        if(this.GOING_BACK){
+            playerX = this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2;
+            playerY = this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2;
+            if (this.sister_game_object) {
+                this.sister_game_object.setPosition(playerX, playerY);
+                this.sister_sprite.setPosition(playerX, playerY);
+            }
+        }
 
         // Create player sprite with the circle texture
         this.player = this.physics.add.sprite(playerX, playerY, 'player');
+        console.log('Player created at: ' + playerX + ', ' + playerY);
+        console.log('Sister following: ' + this.sister_following);
+        console.log('Sister sprite: ' + this.sister_sprite);
         this.player.setVisible(false);
         this.player.setCircle(this.PLAYER_SIZE, this.PLAYER_SIZE, this.PLAYER_SIZE);
         this.player.setOffset(this.PLAYER_SIZE / 2, this.PLAYER_SIZE / 2);
@@ -904,6 +959,9 @@ export class Game extends Scene {
         this.uiCamera.ignore(this.debugGraphics);
         this.uiCamera.ignore(this.physics.world.debugGraphic);
         this.uiCamera.ignore(this.playerGridMarker);
+        if(this.sister_sprite){
+            this.uiCamera.ignore(this.sister_sprite);
+        }
         
         // Add battery percentage text
         this.batteryText = this.add.text(
@@ -1050,7 +1108,7 @@ export class Game extends Scene {
 
         // Create dialog container (initially hidden)
         this.createDialogSystem();
-        if(this.currentLevel === 1){
+        if(this.currentLevel === 1 && !this.GOING_BACK){
             this.showDialog("Zack! Your sister Ashley is kidnapped by goblins! Find her and lead her out of the dungeon until your flashlight runs out!", "Let's go!", () => {
             });
         }
@@ -1064,13 +1122,20 @@ export class Game extends Scene {
     }
 
     private checkExitReached(): boolean {
-        const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
-        const playerGridY = Math.floor(this.player.y / this.CELL_SIZE);
-        return playerGridX === this.exitX && playerGridY === this.exitY;
+        if(!this.GOING_BACK){
+            const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
+            const playerGridY = Math.floor(this.player.y / this.CELL_SIZE);
+            return playerGridX === this.exitX && playerGridY === this.exitY;
+        }
+        else{
+            const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
+            const playerGridY = Math.floor(this.player.y / this.CELL_SIZE);
+            return playerGridX === this.entranceX && playerGridY === this.entranceY;
+        }
     }
 
     private updateSisterSprite(delta: number): void {
-        if(this.sister_sprite){
+        if(this.sister_sprite && !this.GOING_BACK){
             this.sister_time += delta;
             if(this.sister_time > this.frameDuration / 2){
                 this.sister_time = 0;
@@ -1081,10 +1146,35 @@ export class Game extends Scene {
             }
             this.sister_sprite.setTexture('sister_cry' + this.sister_cry_frame);
         }
+        else if(this.GOING_BACK && !this.sister_sprite){
+            this.sister_sprite = this.add.sprite(this.player.x, this.player.y, 'sister');
+            this.sister_sprite.setDepth(1000);
+            this.uiCamera.ignore(this.sister_sprite);
+        }
     }
 
     private nextLevel(): void {
-        this.currentLevel++;
+        // Save important state before restarting
+        const wasGoingBack = this.GOING_BACK;
+        const wasSisterFollowing = this.sister_following;
+        
+        if(this.GOING_BACK && this.currentLevel != 1){
+            this.currentLevel--;
+        }
+        else if(this.GOING_BACK && this.currentLevel == 1){
+            this.showDialog("You've saved your sister, Zack! \n\n You are a hero! \n\n Total time: " + this.timerText.text, "Restart", () => {
+                this.resetGame();
+            });
+            return;
+        }
+        else{
+            this.currentLevel++;
+        }
+        
+        // Store state in registry to persist across scene restart
+        this.registry.set('GOING_BACK', wasGoingBack);
+        this.registry.set('sister_following', wasSisterFollowing);
+        this.registry.set('currentLevel', this.currentLevel);
         
         // Clear all queues
         this.wallsToAdd = [];
@@ -1135,9 +1225,6 @@ export class Game extends Scene {
         this.ghost_animation_delays = [];
         this.goblin_animation_delays = [];
         
-        // Reset timer
-        this.gameTimer = 0;
-        
         // Restart the scene to generate a new level
         this.scene.restart();
     }
@@ -1153,13 +1240,20 @@ export class Game extends Scene {
                 this.isTransitioning = true;
 
                 // Center player on exit tile
-                const exitCenterX = this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2;
-                const exitCenterY = this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2;
-                
-                // Stop any current movement and set small rightward velocity
-                this.player.setVelocity(2, 0); // Small constant rightward velocity
+                let exitCenterX = this.exitX * this.CELL_SIZE + this.CELL_SIZE / 2;
+                let exitCenterY = this.exitY * this.CELL_SIZE + this.CELL_SIZE / 2;
                 this.isMoving = true;
-                this.lastDirection = 'right';
+                // Stop any current movement and set small rightward velocity
+                if(!this.GOING_BACK){
+                    this.player.setVelocity(1, 0); // Small constant rightward velocity
+                    this.lastDirection = 'right';
+                }
+                else{
+                    exitCenterX = this.entranceX * this.CELL_SIZE + this.CELL_SIZE / 2;
+                    exitCenterY = this.entranceY * this.CELL_SIZE + this.CELL_SIZE / 2;
+                    this.player.setVelocity(-1, 0);
+                    this.lastDirection = 'left';
+                }
                 
                 // Move player to exit center
                 this.player.setPosition(exitCenterX, exitCenterY);
@@ -1206,14 +1300,26 @@ export class Game extends Scene {
                     onComplete: checkComplete
                 });
 
-                // Player dissolve effect
-                this.tweens.add({
-                    targets: this.playerSprite,
-                    scale: 0,
-                    duration: this.TRANSITION_DURATION,
-                    ease: 'Linear',
-                    onComplete: checkComplete
-                });
+                if(!this.GOING_BACK){
+                    // Player dissolve effect
+                    this.tweens.add({
+                        targets: this.playerSprite,
+                        scale: 0,
+                        duration: this.TRANSITION_DURATION,
+                        ease: 'Linear',
+                        onComplete: checkComplete
+                    });
+                }
+                else{
+                    // Player dissolve effect
+                    this.tweens.add({
+                        targets: this.playerSprite,
+                        scale: 1.5,
+                        duration: this.TRANSITION_DURATION,
+                        ease: 'Linear',
+                        onComplete: checkComplete
+                    });
+                }
 
             } catch (error) {
                 reject(error);
@@ -1236,7 +1342,7 @@ export class Game extends Scene {
 
         const isAtExit = this.checkExitReached();
 
-        if (isAtExit && this.currentLevel != this.TOTAL_LEVELS) {
+        if (isAtExit && (this.currentLevel != this.TOTAL_LEVELS || this.GOING_BACK && this.currentLevel != 1)) {
             try {
                 // Set all state flags at once to prevent race conditions
                 this.exitSequenceInProgress = true;
@@ -1244,7 +1350,6 @@ export class Game extends Scene {
                 this.isGeneratingLevel = true;
                 
                 await this.playExitTransition();
-
 
                 await this.nextLevel();
 
@@ -1260,9 +1365,10 @@ export class Game extends Scene {
                 this.transitionPromise = null;
             }
         }
-        else if (isAtExit && this.currentLevel == this.TOTAL_LEVELS) {
-            this.showDialog("You've saved your sister, Zack! \n\n You are a hero! \n\n Total time: " + this.timerText.text, "Restart", () => {
-                this.scene.start('MainMenu');
+        else if (isAtExit && !this.GOING_BACK && this.currentLevel == this.TOTAL_LEVELS) {
+            this.showDialog("'Zack! It's you, I am so scared'! \n\n 'Don't worry, Ashley! Let's get out of here!'", "Follow me!", () => {
+                this.GOING_BACK = true;
+                this.sister_following = true;
             });
         }
     }
@@ -1545,6 +1651,7 @@ export class Game extends Scene {
                 });
             }
         }
+        this.followPlayer();
     }
 
     private useBattery(){
@@ -1568,9 +1675,13 @@ export class Game extends Scene {
             return;
         }
         if (!this.player?.body || !this.playerSprite) return; 
-        if(this.isTransitioning){
-            this.player.setVelocity(5, 0);
-            this.playerSprite.setPosition(this.player.x + (time - this.transitionStart) * 0.001, this.player.y);
+        if(this.isTransitioning && !this.GOING_BACK){
+            this.player.setVelocity(2, 0);
+            this.playerSprite.setPosition(this.player.x + (time - this.transitionStart) * 0.0005, this.player.y + (time - this.transitionStart) * 0.0005);
+        }
+        else if(this.isTransitioning && this.GOING_BACK){
+            this.player.setVelocity(-2, 0);
+            this.playerSprite.setPosition(this.player.x - (time - this.transitionStart) * -0.0005, this.player.y - (time - this.transitionStart) * -0.0005);
         }
         const velocity = this.player.body.velocity;
         const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
@@ -1608,18 +1719,34 @@ export class Game extends Scene {
                 case 'down':
                     this.playerSprite.setTexture(`player_down_walk${frame}`);
                     this.playerSprite.setFlipX(false);
+                    if(this.sister_following){
+                        this.sister_sprite.setTexture(`sister_down_walk${frame}`);
+                        this.sister_sprite.setFlipX(false);
+                    }
                     break;
                 case 'up':
                     this.playerSprite.setTexture(`player_up_walk${frame}`);
                     this.playerSprite.setFlipX(false);
+                    if(this.sister_following){
+                        this.sister_sprite.setTexture(`sister_up_walk${frame}`);
+                        this.sister_sprite.setFlipX(false);
+                    }
                     break;
                 case 'left':
                     this.playerSprite.setTexture(`player_left_walk${frame}`);
                     this.playerSprite.setFlipX(false);
+                    if(this.sister_following){
+                        this.sister_sprite.setTexture(`sister_left_walk${frame}`);
+                        this.sister_sprite.setFlipX(false);
+                    }
                     break;
                 case 'right':
                     this.playerSprite.setTexture(`player_left_walk${frame}`);
                     this.playerSprite.setFlipX(true);
+                    if(this.sister_following){
+                        this.sister_sprite.setTexture(`sister_left_walk${frame}`);
+                        this.sister_sprite.setFlipX(true);
+                    }
                     break;
             }
         } else {
@@ -1628,18 +1755,34 @@ export class Game extends Scene {
                 case 'down':
                     this.playerSprite.setTexture('player_down_idle');
                     this.playerSprite.setFlipX(false);
+                    if(this.sister_following){
+                        this.sister_sprite.setTexture(`sister_down_idle`);
+                        this.sister_sprite.setFlipX(false);
+                    }
                     break;
                 case 'up':
                     this.playerSprite.setTexture('player_up_idle');
                     this.playerSprite.setFlipX(false);
+                    if(this.sister_following){
+                        this.sister_sprite.setTexture(`sister_up_idle`);
+                        this.sister_sprite.setFlipX(false);
+                    }
                     break;
                 case 'left':
                     this.playerSprite.setTexture('player_left_idle');
                     this.playerSprite.setFlipX(false);
+                    if(this.sister_following){
+                        this.sister_sprite.setTexture(`sister_left_idle`);
+                        this.sister_sprite.setFlipX(false);
+                    }
                     break;
                 case 'right':
                     this.playerSprite.setTexture('player_left_idle');
                     this.playerSprite.setFlipX(true);
+                    if(this.sister_following){
+                        this.sister_sprite.setTexture(`sister_left_idle`);
+                        this.sister_sprite.setFlipX(true);
+                    }
                     break;
             }
         }
@@ -1749,6 +1892,9 @@ export class Game extends Scene {
     }
 
     private playerTakeDamage(): void {
+        if(this.isTransitioning){
+            return;
+        }
         // Reduce player hit points
         this.playerHitPoints--;
         
@@ -1836,20 +1982,23 @@ export class Game extends Scene {
                 duration: 7000,
                 onComplete: () => {
                     this.showDialog("You are dead! Game over!", "Darn...", () => {
-                        this.scene.start('MainMenu');
-                        this.playerHitPoints = this.PLAYER_MAX_HIT_POINTS;
-                        this.flashlightBattery = 100;
-                        this.battery_count = 0;
-                        this.key_count = 0;
-                        this.bomb_count = 0;
-                        this.camera_count = 0;
+                        this.resetGame();
                     });
                 }
             });
         }
     }
 
-    
+    private resetGame(): void {
+        this.scene.start('MainMenu');
+        this.playerHitPoints = this.PLAYER_MAX_HIT_POINTS;
+        this.flashlightBattery = 100;
+        this.battery_count = 0;
+        this.key_count = 0;
+        this.bomb_count = 0;
+        this.camera_count = 0;
+        this.gameTimer = 0;
+    }
 
     private spawnGoblins(): void {
         if(!this.CAN_SPAWN){
@@ -1964,7 +2113,6 @@ export class Game extends Scene {
             else if (distanceToPlayer < 1000) {
                 const goblinGridX = Math.floor(goblinSprite.x / this.CELL_SIZE);
                 const goblinGridY = Math.floor(goblinSprite.y / this.CELL_SIZE);
-                var goblinTile = this.grid[goblinGridY][goblinGridX];
 
                 if(this.playerVisitedTiles.includes({x: goblinGridX, y: goblinGridY})){
                     var currentTile = this.playerVisitedTiles.indexOf({x: goblinGridX, y: goblinGridY})
@@ -2346,8 +2494,48 @@ export class Game extends Scene {
         });
     }
 
+    private followPlayer(): void {
+        if(this.GOING_BACK && this.sister_following){
+            if(this.sister_game_object && this.sister_sprite){
+                // Calculate direction from sister to player
+                const dx = this.player.x - this.sister_game_object.x;
+                const dy = this.player.y - this.sister_game_object.y;
+                
+                // Normalize the direction vector
+                const length = Math.sqrt(dx * dx + dy * dy);
+                
+                // Prevent division by zero
+                if (length > 0) {
+                    const normalizedDx = dx / length;
+                    const normalizedDy = dy / length;
+                    
+                    //closer to player, lower speed, until halt
+                    let speed = 100
+                    if(length < 10){
+                        speed = 0;
+                    }
+                    else if(length > 32){
+                        speed = 200;
+                    }
+                    this.sister_game_object.setVelocity(normalizedDx * speed, normalizedDy * speed);
+                } else {
+                    this.sister_game_object.setVelocity(0, 0);
+                }
+                
+                this.sister_sprite.setPosition(this.sister_game_object.x, this.sister_game_object.y);
+                console.log("Sister position: " + this.sister_game_object.x + ", " + this.sister_game_object.y);
+                
+                // Make sure the sister is always visible by clearing any mask
+                this.sister_sprite.clearMask();
+            }
+        }
+    }
+
 
     private spawnItems(): void {
+        if(this.GOING_BACK){
+            return;
+        }
         // Clear any existing batteries
         this.batteries.clear(true, true);
         this.battery_positions = [];

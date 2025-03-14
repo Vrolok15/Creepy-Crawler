@@ -239,20 +239,70 @@ export class LevelGenerator {
             exitRoom = shuffledRooms[shuffledRooms.length - 1];
         }
 
+        // Helper function to find a safe position inside a room (not on walls)
+        const findSafePosition = (room: Room): { x: number, y: number } => {
+            // Use the center area of the room to avoid border walls
+            // Add padding to avoid walls
+            const padding = 2;
+            const minX = room.x + padding;
+            const maxX = room.x + room.width - padding - 1;
+            const minY = room.y + padding;
+            const maxY = room.y + room.height - padding - 1;
+            
+            // Ensure we have a valid area to place in
+            if (maxX <= minX || maxY <= minY) {
+                // Room is too small, use center point
+                return {
+                    x: room.x + Math.floor(room.width / 2),
+                    y: room.y + Math.floor(room.height / 2)
+                };
+            }
+            
+            // Try to find a position that's definitely a floor (not a wall)
+            let x, y;
+            let attempts = 0;
+            const maxAttempts = 20;
+            
+            do {
+                x = Math.floor(minX + Math.random() * (maxX - minX + 1));
+                y = Math.floor(minY + Math.random() * (maxY - minY + 1));
+                attempts++;
+                
+                // If we've tried too many times, just use the center of the room
+                if (attempts >= maxAttempts) {
+                    x = room.x + Math.floor(room.width / 2);
+                    y = room.y + Math.floor(room.height / 2);
+                    // Force the center to be a floor
+                    if (x >= 0 && x < this.config.gridSize && y >= 0 && y < this.config.gridSize) {
+                        this.grid[y][x] = false;
+                    }
+                    break;
+                }
+            } while (this.grid[y][x] === true); // Keep trying until we find a non-wall position
+            
+            return { x, y };
+        };
+
         // Place entrance in entrance room
-        const entranceX = entranceRoom.x + Math.floor(Math.random() * entranceRoom.width);
-        const entranceY = entranceRoom.y + Math.floor(Math.random() * entranceRoom.height);
+        const entrancePos = findSafePosition(entranceRoom);
+        const entranceX = entrancePos.x;
+        const entranceY = entrancePos.y;
 
         // Place exit in exit room
-        let exitX: number;
-        let exitY: number;
-        do {
-            exitX = exitRoom.x + Math.floor(Math.random() * exitRoom.width);
-            exitY = exitRoom.y + Math.floor(Math.random() * exitRoom.height);
-        } while (this.grid[exitY][exitX]); // Keep trying until we find a non-wall position
+        const exitPos = findSafePosition(exitRoom);
+        const exitX = exitPos.x;
+        const exitY = exitPos.y;
 
-        // Ensure the exit position is marked as floor
-        this.grid[exitY][exitX] = false;
+        // Ensure the positions are marked as floor
+        if (entranceX >= 0 && entranceX < this.config.gridSize && 
+            entranceY >= 0 && entranceY < this.config.gridSize) {
+            this.grid[entranceY][entranceX] = false;
+        }
+        
+        if (exitX >= 0 && exitX < this.config.gridSize && 
+            exitY >= 0 && exitY < this.config.gridSize) {
+            this.grid[exitY][exitX] = false;
+        }
 
         return { entranceX, entranceY, exitX, exitY };
     }
