@@ -190,6 +190,16 @@ export class Game extends Scene {
     private isDialogOpen: boolean = false;
     private previousTimeScale: number = 1;
 
+    private music!: Phaser.Sound.BaseSound;
+    private soundEffects: Map<string, Phaser.Sound.BaseSound> = new Map();
+
+    private playSound(key: string, config: { volume?: number } = {}): void {
+        const sound = this.soundEffects.get(key);
+        if (sound) {
+            sound.play({ volume: config.volume ?? 1 });
+        }
+    }
+
     constructor() {
         super('Game');
         this.player_saved_hit_points = this.PLAYER_MAX_HIT_POINTS;
@@ -577,7 +587,7 @@ export class Game extends Scene {
     }
 
     preload() {
-        // Load player sprites
+        // Load sprites
         this.load.image('stair_up', 'assets/sprites/stair_up.png');
         this.load.image('stair_down', 'assets/sprites/stair_down.png');
         this.load.image('sister_down_idle', 'assets/sprites/sister_stand_down.png');
@@ -627,6 +637,30 @@ export class Game extends Scene {
         this.load.image('bomb_ui', 'assets/sprites/bomb_ui.png');
         this.load.image('camera', 'assets/sprites/camera.png');
         this.load.image('camera_ui', 'assets/sprites/camera_ui.png');
+        
+        // Try to load audio files with error handling
+        try {
+            // Load footstep sounds
+            this.load.audio('camera', 'assets/sfx/camera.wav');
+            this.load.audio('death', 'assets/sfx/death.wav');
+            this.load.audio('door', 'assets/sfx/door.wav');
+            this.load.audio('explosion', 'assets/sfx/explosion.wav');
+            this.load.audio('goblin', 'assets/sfx/goblin.wav');
+            this.load.audio('goblin_death', 'assets/sfx/goblin_death.wav');
+            this.load.audio('ghost', 'assets/sfx/ghost.wav');
+            this.load.audio('ghost_death', 'assets/sfx/ghost_death.wav');
+            this.load.audio('hurt', 'assets/sfx/hurt.wav');
+            this.load.audio('item', 'assets/sfx/item.wav');
+            this.load.audio('note', 'assets/sfx/note.wav');
+            this.load.audio('recharge', 'assets/sfx/recharge.wav');
+            this.load.audio('sister', 'assets/sfx/sister.wav');
+
+            // Load music
+            this.load.audio('music', 'assets/music/upside down grin2.ogg');
+            this.load.audio('music_fast', 'assets/music/gi-i dark ambient techno.ogg');
+        } catch (error) {
+            console.warn('Error loading audio files:', error);
+        }
     }
 
     create() {
@@ -647,6 +681,10 @@ export class Game extends Scene {
         
         this.max_ghosts = this.ghosts_per_level[this.currentLevel - 1];
         this.max_goblins = this.goblins_per_level[this.currentLevel - 1];
+        if(this.GOING_BACK){
+            this.max_ghosts = 10;
+            this.max_goblins = 20;
+        }
         this.MAX_LOCKED_DOORS = this.locked_doors_per_level[this.currentLevel - 1];
 
         // Enable physics
@@ -1112,6 +1150,30 @@ export class Game extends Scene {
             this.showDialog("Zack! Your sister Ashley is kidnapped by goblins! Find her and lead her out of the dungeon until your flashlight runs out!", "Let's go!", () => {
             });
         }
+
+        // Initialize audio with error handling
+        try {
+            // Initialize sound effects if they were loaded successfully
+            const soundKeys = ['camera', 'death', 'door', 'explosion', 'goblin', 'goblin_death', 'ghost', 'ghost_death', 'hurt', 'item', 'note', 'recharge', 'sister'];
+            
+            for (const key of soundKeys) {
+                if (this.cache.audio.exists(key)) {
+                    this.soundEffects.set(key, this.sound.add(key));
+                }
+            }
+            
+            // Initialize music if it was loaded successfully
+            if (this.cache.audio.exists('music') && !this.GOING_BACK) {
+                this.music = this.sound.add('music');
+                this.music.play({ loop: true, volume: 0.5 });
+            }
+            else if(this.cache.audio.exists('music_fast') && this.GOING_BACK){
+                this.music = this.sound.add('music_fast');
+                this.music.play({ loop: true, volume: 0.5 });
+            }
+        } catch (error) {
+            console.warn('Error initializing audio:', error);
+        }
     }
 
     private updateTargetPosition(pointer: Phaser.Input.Pointer) {
@@ -1366,6 +1428,14 @@ export class Game extends Scene {
             }
         }
         else if (isAtExit && !this.GOING_BACK && this.currentLevel == this.TOTAL_LEVELS) {
+            this.playSound('sister');
+
+            if(this.cache.audio.exists('music_fast')){
+                this.music = this.sound.add('music_fast');
+                this.music.play({ loop: true, volume: 0.5 });
+                this.max_ghosts = 10;
+                this.max_goblins = 20;
+            }
             this.showDialog("'Zack! It's you, I am so scared'! \n\n 'Don't worry, Ashley! Let's get out of here!'", "Follow me!", () => {
                 this.GOING_BACK = true;
                 this.sister_following = true;
@@ -1654,14 +1724,17 @@ export class Game extends Scene {
         this.followPlayer();
     }
 
-    private useBattery(){
-        this.rechargeTimer = 0;
-        this.battery_count -= 1;
-        this.updateBatteriesUI();
-        this.flashlightBattery = 100; // Recharge to full
-        
-        // Show recharge text
-        this.showPlayerEventText('Recharge');
+    private useBattery(): void {
+        if (this.battery_count > 0 && this.flashlightBattery < 100) {
+            this.rechargeTimer = 0;
+            this.playSound('recharge', { volume: 0.6 });
+            this.battery_count--;
+            this.updateBatteriesUI();
+            this.flashlightBattery = 100; // Recharge to full
+            
+            // Show recharge text
+            this.showPlayerEventText('Recharge');
+        }
     }
 
     updatePlayerAnimation(time: number) {
@@ -1891,12 +1964,17 @@ export class Game extends Scene {
         }
     }
 
+    private isInvincible(): boolean {
+        return this.playerLastHitTime > 0 && (this.time.now - this.playerLastHitTime) < this.playerInvincibilityDuration;
+    }
+
     private playerTakeDamage(): void {
         if(this.isTransitioning){
             return;
         }
         // Reduce player hit points
         this.playerHitPoints--;
+        this.playSound('hurt', { volume: 0.5 });
         
         // Create blood particle effect
         const bloodParticles = this.add.particles(this.player.x, this.player.y, 'ghost_1', {
@@ -2064,7 +2142,7 @@ export class Game extends Scene {
         if (this.goblin_count !== this.goblin_group.getChildren().length) {
             this.goblin_count = this.goblin_group.getChildren().length;
         }
-
+        
         for (let i = 0; i < this.goblin_count; i++) {
             const goblin = this.goblin_group.getChildren()[i];
             if (goblin) {
@@ -2096,6 +2174,10 @@ export class Game extends Scene {
             const isInBrightLight = this.isInBrightLight(goblinSprite.x, goblinSprite.y);
             
             if (isInBrightLight) {
+                if (!goblinSprite.getData('isRunning')) {
+                    this.playSound('goblin', { volume: 0.5 });
+                    goblinSprite.setData('isRunning', true);
+                }
                 // Calculate direction to player
                 const dx = this.player.x - goblinSprite.x;
                 const dy = this.player.y - goblinSprite.y;
@@ -2109,8 +2191,12 @@ export class Game extends Scene {
                 let speed = Math.max(50, 100 - distanceToPlayer / 10);
                 goblinSprite.setVelocity(normalizedDx * -speed * 2, normalizedDy * -speed * 2);
                 return; // Skip the rest of the logic for this goblin
+            } 
+            else {
+                goblinSprite.setData('isRunning', false);
             }
-            else if (distanceToPlayer < 1000) {
+
+            if (distanceToPlayer < 1000) {
                 const goblinGridX = Math.floor(goblinSprite.x / this.CELL_SIZE);
                 const goblinGridY = Math.floor(goblinSprite.y / this.CELL_SIZE);
 
@@ -2148,13 +2234,11 @@ export class Game extends Scene {
                     }
                 }
             } else {
-                //add random movement to the ghost
                 goblinSprite.setVelocity(Phaser.Math.Between(-10, 10), Phaser.Math.Between(-10, 10));
             }
-        }); 
+        });
         
-        
-        // Destroy collected ghosts after iteration
+        // Destroy collected goblins after iteration
         if (goblinsToDestroy.length > 0) {
             goblinsToDestroy.forEach(({goblin, sprite}) => {
                 // Destroy the goblin
@@ -2163,7 +2247,102 @@ export class Game extends Scene {
         }
     }
 
+    private updateGhosts(time: number): void {
+        // Skip if no ghosts
+        if (this.max_ghosts == 0) {
+            return;
+        }
+        else if(this.ghost_count < this.max_ghosts){
+            this.spawnGhosts();
+        }
+        
+        // Ensure ghost_count matches actual count
+        if (this.ghost_count !== this.ghost_group.getChildren().length) {
+            this.ghost_count = this.ghost_group.getChildren().length;
+        }
+        
+        for (let i = 0; i < this.ghost_count; i++) {
+            const ghost = this.ghost_group.getChildren()[i];
+            if (ghost) {
+                const delay = this.ghost_animation_delays[i];
+                const currentTime = time % delay;
+                if (currentTime < delay / 2) {
+                    (ghost as Phaser.GameObjects.Sprite).setTexture('ghost_1');
+                } else {
+                    (ghost as Phaser.GameObjects.Sprite).setTexture('ghost_2');
+                }
+            }
+        }
+        
+        // Collect ghosts to destroy
+        const ghostsToDestroy: {ghost: Phaser.GameObjects.GameObject, sprite: Phaser.Physics.Arcade.Sprite}[] = [];
+        
+        // If ghost is within screen view, follow player
+        this.ghost_group.getChildren().forEach((ghost) => {
+            const ghostSprite = ghost as Phaser.Physics.Arcade.Sprite;
+            this.uiCamera.ignore(ghostSprite);
+            const distanceToPlayer = Phaser.Math.Distance.Between(
+                ghostSprite.x,
+                ghostSprite.y,
+                this.player.x,
+                this.player.y
+            );
+            
+            // Check if ghost is in bright light zone
+            const isInBrightLight = this.isInBrightLight(ghostSprite.x, ghostSprite.y);
+            
+            if (isInBrightLight) {
+                // Mark ghost for destruction if it's in bright light
+                ghostsToDestroy.push({ghost, sprite: ghostSprite});
+                ghost.active = false;
+                return; // Skip the rest of the logic for this ghost
+            } 
+            
+            if ((distanceToPlayer < 1000 || this.flashlightBattery <= 0) && this.playerHitPoints > 0) {
+                // Play sound when ghost first sees player
+                if (!ghostSprite.getData('isFollowing')) {
+                    this.playSound('ghost', { volume: 0.5 });
+                    ghostSprite.setData('isFollowing', true);
+                }
+                // Calculate direction to player
+                const dx = this.player.x - ghostSprite.x;
+                const dy = this.player.y - ghostSprite.y;
+                
+                // Normalize the direction vector
+                const length = Math.sqrt(dx * dx + dy * dy);
+                const normalizedDx = dx / length;
+                const normalizedDy = dy / length;
+                
+                // Set velocity directly with speed of 50
+                let speed = Math.max(50, 100 - distanceToPlayer / 10);
+                ghostSprite.setVelocity(normalizedDx * speed, normalizedDy * speed);
+                
+                if(distanceToPlayer < 10 && ghost.active && !this.isTransitioning && this.playerHitPoints > 0){
+                    if(time - this.playerLastHitTime > this.playerInvincibilityDuration){
+                        this.playerTakeDamage();
+                        this.playerLastHitTime = time;
+                        ghostsToDestroy.push({ghost, sprite: ghostSprite});
+                        return;
+                    }
+                }
+            } else {
+                //add random movement to the ghost
+                ghostSprite.setVelocity(Phaser.Math.Between(-10, 10), Phaser.Math.Between(-10, 10));
+            }
+        }); 
+        
+        // Destroy collected ghosts after iteration
+        if (ghostsToDestroy.length > 0) {
+            ghostsToDestroy.forEach(({ghost, sprite}) => {
+                // Destroy the ghost
+                this.destroyGhost(ghost, sprite);
+            });
+        }
+    }
+
     private destroyGoblin(goblin: Phaser.GameObjects.GameObject, goblinSprite: Phaser.Physics.Arcade.Sprite): void {
+        this.playSound('goblin_death', { volume: 0.7 });
+        goblin.destroy();
         
         // Check if the goblin is already being destroyed (has an active tween)
         const existingTweens = this.tweens.getTweensOf(goblinSprite);
@@ -2308,96 +2487,9 @@ export class Game extends Scene {
         this.physics.add.collider(this.ghost_group, this.ghost_group);
     }
 
-    private updateGhosts(time: number): void {
-        // Skip if no ghosts
-        if (this.max_ghosts == 0) {
-            return;
-        }
-        else if(this.ghost_count < this.max_ghosts){
-            this.spawnGhosts();
-        }
-        
-        // Ensure ghost_count matches actual count
-        if (this.ghost_count !== this.ghost_group.getChildren().length) {
-            this.ghost_count = this.ghost_group.getChildren().length;
-        }
-        
-        for (let i = 0; i < this.ghost_count; i++) {
-            const ghost = this.ghost_group.getChildren()[i];
-            if (ghost) {
-                const delay = this.ghost_animation_delays[i];
-                const currentTime = time % delay;
-                if (currentTime < delay / 2) {
-                    (ghost as Phaser.GameObjects.Sprite).setTexture('ghost_1');
-                } else {
-                    (ghost as Phaser.GameObjects.Sprite).setTexture('ghost_2');
-                }
-            }
-        }
-        
-        // Collect ghosts to destroy
-        const ghostsToDestroy: {ghost: Phaser.GameObjects.GameObject, sprite: Phaser.Physics.Arcade.Sprite}[] = [];
-        
-        // If ghost is within screen view, follow player
-        this.ghost_group.getChildren().forEach((ghost) => {
-            const ghostSprite = ghost as Phaser.Physics.Arcade.Sprite;
-            this.uiCamera.ignore(ghostSprite);
-            const distanceToPlayer = Phaser.Math.Distance.Between(
-                ghostSprite.x,
-                ghostSprite.y,
-                this.player.x,
-                this.player.y
-            );
-            
-            // Check if ghost is in bright light zone
-            const isInBrightLight = this.isInBrightLight(ghostSprite.x, ghostSprite.y);
-            
-            if (isInBrightLight) {
-                // Mark ghost for destruction if it's in bright light
-                ghostsToDestroy.push({ghost, sprite: ghostSprite});
-                ghost.active = false;
-                return; // Skip the rest of the logic for this ghost
-            }
-            
-            if ((distanceToPlayer < 1000 || this.flashlightBattery <= 0) && this.playerHitPoints > 0) {
-                // Calculate direction to player
-                const dx = this.player.x - ghostSprite.x;
-                const dy = this.player.y - ghostSprite.y;
-                
-                // Normalize the direction vector
-                const length = Math.sqrt(dx * dx + dy * dy);
-                const normalizedDx = dx / length;
-                const normalizedDy = dy / length;
-                
-                // Set velocity directly with speed of 50
-                let speed = Math.max(50, 100 - distanceToPlayer / 10);
-                ghostSprite.setVelocity(normalizedDx * speed, normalizedDy * speed);
-                
-                if(distanceToPlayer < 10 && ghost.active && !this.isTransitioning && this.playerHitPoints > 0){
-                    if(time - this.playerLastHitTime > this.playerInvincibilityDuration){
-                        this.playerTakeDamage();
-                        this.playerLastHitTime = time;
-                        ghostsToDestroy.push({ghost, sprite: ghostSprite});
-                        return;
-                    }
-                }
-            } else {
-                //add random movement to the ghost
-                ghostSprite.setVelocity(Phaser.Math.Between(-10, 10), Phaser.Math.Between(-10, 10));
-            }
-        }); 
-        
-        
-        // Destroy collected ghosts after iteration
-        if (ghostsToDestroy.length > 0) {
-            ghostsToDestroy.forEach(({ghost, sprite}) => {
-                // Destroy the ghost
-                this.destroyGhost(ghost, sprite);
-            });
-        }
-    }
-
     private destroyGhost(ghost: Phaser.GameObjects.GameObject, ghostSprite: Phaser.Physics.Arcade.Sprite): void {
+        this.playSound('ghost_death', { volume: 0.7 });
+        ghost.destroy();
         
         // Check if the ghost is already being destroyed (has an active tween)
         const existingTweens = this.tweens.getTweensOf(ghostSprite);
@@ -2711,6 +2803,7 @@ export class Game extends Scene {
     }
 
     private bombExplode(position: {x: number, y: number, time: number, bomb: Phaser.GameObjects.Sprite}): void {
+        this.playSound('explosion', { volume: 0.8 });
         position.bomb.destroy();
         
         // Calculate explosion center coordinates in pixels
@@ -2877,6 +2970,7 @@ export class Game extends Scene {
     }
 
     private readNote(): void {
+        this.playSound('note', { volume: 0.5 });
         this.showDialog(this.noteText, "Okay", () => {
             this.note.destroy();
         });
@@ -2974,7 +3068,7 @@ export class Game extends Scene {
         _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
         obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
     ): void {
-        
+        this.playSound('item', { volume: 0.6 });
         // Remove the battery from the scene (obj2 is the battery)
         obj2.destroy();
         
@@ -2991,6 +3085,7 @@ export class Game extends Scene {
         _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
         obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
     ): void {
+        this.playSound('item', { volume: 0.6 });
         // Remove the bomb from the scene (obj2 is the bomb)
         obj2.destroy();
 
@@ -3007,6 +3102,7 @@ export class Game extends Scene {
         _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
         obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
     ): void {
+        this.playSound('item', { volume: 0.6 });
         // Remove the key from the scene (obj2 is the key)
         obj2.destroy();
 
@@ -3023,6 +3119,7 @@ export class Game extends Scene {
         _obj1: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile,
         obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
     ): void {
+        this.playSound('item', { volume: 0.6 });
         obj2.destroy();
         this.camera_count++;
         this.updateCameraUI();
@@ -3034,6 +3131,7 @@ export class Game extends Scene {
         obj2: Phaser.GameObjects.GameObject | Phaser.Tilemaps.Tile
     ): void {
         if (this.key_count > 0){
+            this.playSound('door', { volume: 0.8 });
             this.key_count--;
             this.updateKeysUI();
             this.removeLockedDoor(obj2 as Phaser.Physics.Arcade.Sprite);
@@ -3043,25 +3141,28 @@ export class Game extends Scene {
     }
 
     private useCamera(time: number): void {
-        this.camera_last_used = time;
-        this.camera_count--;
-        this.updateCameraUI();
-        //create white rectangle to cover the screen
-        const whiteRectangle = this.add.rectangle(0, 0, 100000 , 100000, 0xffffff, 1);
-        // Camera doesn't have an add method, we use the scene's add method instead
-        this.cameras.main.ignore(whiteRectangle);
-        this.tweens.add({
-            targets: whiteRectangle,
-            alpha: 0,
-            duration: this.camera_spawn_delay,
-            onComplete: () => {
-                whiteRectangle.destroy();
-            }
-        });
+        if (this.camera_count > 0 && time - this.camera_last_used >= this.camera_spawn_delay) {
+            this.playSound('camera', { volume: 0.7 });
+            this.camera_last_used = time;
+            this.camera_count--;
+            this.updateCameraUI();
+            //create white rectangle to cover the screen
+            const whiteRectangle = this.add.rectangle(0, 0, 100000 , 100000, 0xffffff, 1);
+            // Camera doesn't have an add method, we use the scene's add method instead
+            this.cameras.main.ignore(whiteRectangle);
+            this.tweens.add({
+                targets: whiteRectangle,
+                alpha: 0,
+                duration: this.camera_spawn_delay,
+                onComplete: () => {
+                    whiteRectangle.destroy();
+                }
+            });
 
-        //remove all ghosts and goblins
-        this.ghost_group.clear(true, true);
-        this.goblin_group.clear(true, true);
+            //remove all ghosts and goblins
+            this.ghost_group.clear(true, true);
+            this.goblin_group.clear(true, true);
+        }
     }
 
     // Add cleanup method for scene shutdown
