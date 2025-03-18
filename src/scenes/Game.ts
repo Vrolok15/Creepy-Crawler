@@ -1632,6 +1632,10 @@ export class Game extends Scene {
             });
         }
 
+        if(this.input.keyboard && this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.ESC).isDown){
+            this.showDialog("Game paused", "Resume", () => {});
+        }
+
         // Handle battery recharge
         if(!this.isTransitioning && this.input.keyboard && this.input.keyboard.addKey(Phaser.Input.Keyboard.KeyCodes.BACKSPACE).isDown && this.battery_count > 0){
             // Track recharge timer to prevent rapid recharges
@@ -1666,7 +1670,7 @@ export class Game extends Scene {
         }
 
         // Handle movement
-        if (!this.isTransitioning && this.isMoving && this.input.activePointer.isDown && this.input.activePointer.button === 0) {
+        if (!this.isTransitioning && !this.isDialogOpen && this.isMoving && this.input.activePointer.isDown && this.input.activePointer.button === 0) {
             // Calculate distance to target
             const distanceToTarget = Phaser.Math.Distance.Between(
                 this.player.x,
@@ -1752,6 +1756,10 @@ export class Game extends Scene {
     }
 
     updatePlayerAnimation(time: number) {
+        if(this.isDialogOpen){
+            this.player.setVelocity(0, 0);
+            return;
+        }
         if(this.transitionStart == 0){
             this.transitionStart = time;
         }
