@@ -2,6 +2,8 @@
 
 A procedurally generated horror game where you navigate through dark dungeons, avoid enemies, and try to find your sister and lead her out. 
 
+Try it out here - https://vrolok15.github.io/creepy-crawler-dist/
+
 Built with Phaser 3 and TypeScript.
 
 ## Features

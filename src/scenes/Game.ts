@@ -193,7 +193,6 @@ export class Game extends Scene {
     private dialogText!: Phaser.GameObjects.Text;
     private dialogButton!: Phaser.GameObjects.Container;
     private isDialogOpen: boolean = false;
-    private dialog_active: boolean = false;
     private previousTimeScale: number = 1;
 
     private music!: Phaser.Sound.BaseSound;
@@ -2169,7 +2168,7 @@ export class Game extends Scene {
         if (this.max_goblins == 0) {
             return;
         }
-        else if(this.dialog_active || this.isTransitioning){
+        else if(this.isDialogOpen || this.isTransitioning){
             this.goblin_group.getChildren().forEach((goblin) => {
                 goblin.active = false;
                 (goblin as Phaser.Physics.Arcade.Sprite).setVelocity(0, 0);
@@ -2295,10 +2294,10 @@ export class Game extends Scene {
         if (this.max_ghosts == 0) {
             return;
         }
-        else if(this.dialog_active || this.isTransitioning){
+        else if(this.isDialogOpen || this.isTransitioning){
             this.ghost_group.getChildren().forEach((ghost) => {
-                ghost.active = false;
-                (ghost as Phaser.Physics.Arcade.Sprite).setVelocity(0, 0);
+                const ghostSprite = ghost as Phaser.Physics.Arcade.Sprite;
+                ghostSprite.setVelocity(0, 0);
             });
             return;
         }
