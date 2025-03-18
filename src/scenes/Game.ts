@@ -64,10 +64,12 @@ export class Game extends Scene {
 
     private lastDirection: 'up' | 'down' | 'left' | 'right' = 'down';
     private frameTime: number = 0;
-    private frameDuration: number = 150; // Adjust this to control animation speed (in milliseconds)
+    private frameDuration: number = 200; // Adjust this to control animation speed (in milliseconds)
     private currentFrame: number = 0; // 0 or 1 for alternating frames
 
     private sister_cry_frame: number = 1;
+    private sister_started_cry_timer: number = 0;
+    private sister_cry_duration: number = 14000;
     private sister_time: number = 0;
     private sister_game_object!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
     private sister_sprite!: Phaser.GameObjects.Sprite;
@@ -102,6 +104,7 @@ export class Game extends Scene {
     private key_positions: {x: number, y: number}[] = [];
     private readonly MAX_KEYS_PER_LEVEL = 3;
     private readonly MIN_KEYS_PER_LEVEL = 1;
+    private key_starting_level = 2;
 
     private bomb_sprite!: Phaser.GameObjects.Sprite;
     private bombs!: Phaser.Physics.Arcade.Group;
@@ -117,6 +120,7 @@ export class Game extends Scene {
     private bomb_placement_delay_timer: number = 0;
     private readonly MAX_BOMBS_PER_LEVEL = 3;
     private readonly MIN_BOMBS_PER_LEVEL = 1;
+    private bomb_starting_level = 4;
 
     private camera_sprite!: Phaser.GameObjects.Sprite;
     private camera_items!: Phaser.Physics.Arcade.Group;
@@ -128,6 +132,7 @@ export class Game extends Scene {
     private CAN_SPAWN: boolean = true;
     private MAX_CAMERA_COUNT: number = 2;
     private MIN_CAMERA_COUNT: number = 1;
+    private camera_starting_level = 6;
 
     private lockedDoorPositions: {x: number, y: number, door: Phaser.Physics.Arcade.Sprite}[] = [];
     private lockedDoors!: Phaser.Physics.Arcade.StaticGroup;
@@ -141,7 +146,7 @@ export class Game extends Scene {
     private ghost_animation_delays: number[] = [];
     private ghost_count: number = 0;
     private max_ghosts: number = 3;
-    private ghosts_per_level: number[] = [0, 0, 0, 1, 2, 4, 6, 8, 10];
+    private ghosts_per_level: number[] = [0, 0, 0, 1, 2, 3, 4, 5, 6];
 
     private goblin_group!: Phaser.Physics.Arcade.Group;
     private goblin_animation_delays: number[] = [];
@@ -188,6 +193,7 @@ export class Game extends Scene {
     private dialogText!: Phaser.GameObjects.Text;
     private dialogButton!: Phaser.GameObjects.Container;
     private isDialogOpen: boolean = false;
+    private dialog_active: boolean = false;
     private previousTimeScale: number = 1;
 
     private music!: Phaser.Sound.BaseSound;
@@ -252,46 +258,40 @@ export class Game extends Scene {
         // Clear all existing wall colliders
         this.wallGroup.clear(true, true);
         
+        // Debug counter for walls
+        let wallCount = 0;
+        
         // Redraw all tiles and recreate colliders
         for (let y = 0; y < this.GRID_SIZE; y++) {
             for (let x = 0; x < this.GRID_SIZE; x++) {
                 if (this.grid[y][x] || x == 0 || y == 0 || x == this.GRID_SIZE - 1 || y == this.GRID_SIZE - 1) {
-                    const hasEmptyNeighbor = 
-                        // Orthogonal neighbors
-                        (y > 0 && !this.grid[y-1][x]) || // top
-                        (y < this.GRID_SIZE - 1 && !this.grid[y+1][x]) || // bottom
-                        (x > 0 && !this.grid[y][x-1]) || // left
-                        (x < this.GRID_SIZE - 1 && !this.grid[y][x+1]) || // right
-                        // Diagonal neighbors
-                        (x > 0 && y > 0 && !this.grid[y-1][x-1]) || // top-left
-                        (x < this.GRID_SIZE - 1 && y > 0 && !this.grid[y-1][x+1]) || // top-right
-                        (x > 0 && y < this.GRID_SIZE - 1 && !this.grid[y+1][x-1]) || // bottom-left
-                        (x < this.GRID_SIZE - 1 && y < this.GRID_SIZE - 1 && !this.grid[y+1][x+1]); // bottom-right
-
                     let wall = false;
-                    if ((x == 0 || y == 0 || x == this.GRID_SIZE - 1 || y == this.GRID_SIZE - 1)){
+                    
+                    // Skip drawing walls at exit/entrance points but continue with other walls
+                    if ((this.exitPoint.x == x && this.exitPoint.y == y) || (this.entranceX == x && this.entranceY == y)) {
+                        continue;
+                    }
+                    else if ((x == 0 || y == 0 || x == this.GRID_SIZE - 1 || y == this.GRID_SIZE - 1)) {
                         this.drawStraightTile(x, y);
                         wall = true;
                     }
-                    else {
+                    else if (this.grid[y][x]) {
                         this.drawJaggedTile(x, y);
                         wall = true;
                     }
-                    if (wall){
-                        // Add a static body for collision
-                        const wall = this.physics.add.staticImage(
-                            x * this.CELL_SIZE + this.CELL_SIZE / 2,
-                            y * this.CELL_SIZE + this.CELL_SIZE / 2,
-                            '__DEFAULT'
-                        );
-                        wall.setDisplaySize(this.CELL_SIZE, this.CELL_SIZE);
-                        wall.setVisible(false);
-                        wall.refreshBody();
-                        this.wallGroup.add(wall);
+                    
+                    if (wall) {
+                        wallCount++;
+                        // Add wall collider
+                        const wallSprite = this.add.rectangle(x * this.CELL_SIZE + this.CELL_SIZE / 2, y * this.CELL_SIZE + this.CELL_SIZE / 2, this.CELL_SIZE, this.CELL_SIZE);
+                        this.wallGroup.add(wallSprite);
                     }
                 }
             }
         }
+        
+        // Debug output
+        console.log(`Drew ${wallCount} walls. Grid size: ${this.GRID_SIZE}x${this.GRID_SIZE}`);
     }
 
     private drawStraightTile(x: number, y: number): void {
@@ -599,6 +599,7 @@ export class Game extends Scene {
         this.load.image('sister_up_idle', 'assets/sprites/sister_stand_up.png');
         this.load.image('sister_up_walk1', 'assets/sprites/sister_walk_up_1.png');
         this.load.image('sister_up_walk2', 'assets/sprites/sister_walk_up_2.png');
+        this.load.image('sister_dead', 'assets/sprites/sister_skeleton.png');
         this.load.image('sister_cry1', 'assets/sprites/sister_cry_1.png');
         this.load.image('sister_cry2', 'assets/sprites/sister_cry_2.png');
         this.load.image('sister_cry3', 'assets/sprites/sister_cry_3.png');
@@ -641,6 +642,7 @@ export class Game extends Scene {
         // Try to load audio files with error handling
         try {
             // Load footstep sounds
+            this.load.audio('footstep', 'assets/sfx/footstep.wav');
             this.load.audio('camera', 'assets/sfx/camera.wav');
             this.load.audio('death', 'assets/sfx/death.wav');
             this.load.audio('door', 'assets/sfx/door.wav');
@@ -654,6 +656,8 @@ export class Game extends Scene {
             this.load.audio('note', 'assets/sfx/note.wav');
             this.load.audio('recharge', 'assets/sfx/recharge.wav');
             this.load.audio('sister', 'assets/sfx/sister.wav');
+            this.load.audio('sister_cry', 'assets/sfx/sister_cry.wav');
+            this.load.audio('victory', 'assets/sfx/victory.wav');
 
             // Load music
             this.load.audio('music', 'assets/music/upside down grin2.ogg');
@@ -683,7 +687,7 @@ export class Game extends Scene {
         this.max_goblins = this.goblins_per_level[this.currentLevel - 1];
         if(this.GOING_BACK){
             this.max_ghosts = 10;
-            this.max_goblins = 20;
+            this.max_goblins = 10;
         }
         this.MAX_LOCKED_DOORS = this.locked_doors_per_level[this.currentLevel - 1];
 
@@ -1154,7 +1158,7 @@ export class Game extends Scene {
         // Initialize audio with error handling
         try {
             // Initialize sound effects if they were loaded successfully
-            const soundKeys = ['camera', 'death', 'door', 'explosion', 'goblin', 'goblin_death', 'ghost', 'ghost_death', 'hurt', 'item', 'note', 'recharge', 'sister'];
+            const soundKeys = ['footstep', 'camera', 'death', 'door', 'explosion', 'goblin', 'goblin_death', 'ghost', 'ghost_death', 'hurt', 'item', 'note', 'recharge', 'sister', 'sister_cry', 'victory'];
             
             for (const key of soundKeys) {
                 if (this.cache.audio.exists(key)) {
@@ -1168,6 +1172,7 @@ export class Game extends Scene {
                 this.music.play({ loop: true, volume: 0.5 });
             }
             else if(this.cache.audio.exists('music_fast') && this.GOING_BACK){
+                this.music.stop();
                 this.music = this.sound.add('music_fast');
                 this.music.play({ loop: true, volume: 0.5 });
             }
@@ -1207,6 +1212,11 @@ export class Game extends Scene {
                 }
             }
             this.sister_sprite.setTexture('sister_cry' + this.sister_cry_frame);
+
+            if(this.sister_time > this.sister_started_cry_timer + this.sister_cry_duration){
+                this.playSound('sister_cry', {volume: 0.5});
+                this.sister_started_cry_timer = this.sister_time;
+            }
         }
         else if(this.GOING_BACK && !this.sister_sprite){
             this.sister_sprite = this.add.sprite(this.player.x, this.player.y, 'sister');
@@ -1224,6 +1234,8 @@ export class Game extends Scene {
             this.currentLevel--;
         }
         else if(this.GOING_BACK && this.currentLevel == 1){
+            this.playSound('victory');
+            this.music.stop();
             this.showDialog("You've saved your sister, Zack! \n\n You are a hero! \n\n Total time: " + this.timerText.text, "Restart", () => {
                 this.resetGame();
             });
@@ -1439,6 +1451,7 @@ export class Game extends Scene {
             this.showDialog("'Zack! It's you, I am so scared'! \n\n 'Don't worry, Ashley! Let's get out of here!'", "Follow me!", () => {
                 this.GOING_BACK = true;
                 this.sister_following = true;
+                this.playerHitPoints = 6;
             });
         }
     }
@@ -1476,6 +1489,7 @@ export class Game extends Scene {
 
         // Skip update if dialog is open
         if (this.isDialogOpen) return;
+        this.updatePlayerHealthUI();
 
         this.CAN_SPAWN = time - this.camera_last_used > this.camera_spawn_delay;
 
@@ -1745,6 +1759,11 @@ export class Game extends Scene {
             this.playerSprite.setTexture('player_dead');
             this.playerSprite.setAlpha(1);
             this.playerSprite.setTint(0xffffff);
+            if(this.sister_following){
+                this.sister_sprite.setTexture('sister_dead');
+                this.sister_sprite.setAlpha(1);
+                this.sister_sprite.setTint(0xffffff);
+            }
             return;
         }
         if (!this.player?.body || !this.playerSprite) return; 
@@ -1784,6 +1803,9 @@ export class Game extends Scene {
             if (time > this.frameTime) {
                 this.currentFrame = this.currentFrame === 0 ? 1 : 0;
                 this.frameTime = time + this.frameDuration;
+                if (this.currentFrame == 0) {
+                    this.playSound('footstep', { volume: 0.3 });
+                }
             }
 
             // Set the appropriate texture based on direction and current frame
@@ -1964,10 +1986,6 @@ export class Game extends Scene {
         }
     }
 
-    private isInvincible(): boolean {
-        return this.playerLastHitTime > 0 && (this.time.now - this.playerLastHitTime) < this.playerInvincibilityDuration;
-    }
-
     private playerTakeDamage(): void {
         if(this.isTransitioning){
             return;
@@ -2015,40 +2033,13 @@ export class Game extends Scene {
         // Camera shake effect
         this.cameras.main.shake(200, 0.01);
         
-        // Update health display
-        if(this.playerHitPoints == 5){
-            this.health_sprite3.setTexture('heart_half');
-        }
-        else if(this.playerHitPoints < 5){
-            this.health_sprite3.setTexture('heart_empty');
-        }
-        else{
-            this.health_sprite3.setTexture('heart_full');
-        }
-        if(this.playerHitPoints == 3){
-            this.health_sprite2.setTexture('heart_half');
-        }
-        else if(this.playerHitPoints < 3){
-            this.health_sprite2.setTexture('heart_empty');
-        }
-        else{
-            this.health_sprite2.setTexture('heart_full');
-        }
-        if(this.playerHitPoints == 1){
-            this.health_sprite.setTexture('heart_half');
-        }
-        else if(this.playerHitPoints < 1){
-            this.health_sprite.setTexture('heart_empty');
-        }
-        else{
-            this.health_sprite.setTexture('heart_full');
-        }
-        
         // Reset player appearance after invincibility duration
         this.time.delayedCall(this.playerInvincibilityDuration, () => {
             this.playerSprite.setAlpha(1);
             this.playerSprite.clearTint();
         });
+
+        this.updatePlayerHealthUI();
         
         // Check for game over
         if(this.playerHitPoints <= 0){
@@ -2067,6 +2058,41 @@ export class Game extends Scene {
         }
     }
 
+    private updatePlayerHealthUI(): void {
+            // Update health display
+            if(this.playerHitPoints == 6){
+                this.health_sprite3.setTexture('heart_full');
+                this.health_sprite2.setTexture('heart_full');
+                this.health_sprite.setTexture('heart_full');
+            }
+            else if(this.playerHitPoints == 5){
+                this.health_sprite.setTexture('heart_half');
+            }
+            else if(this.playerHitPoints < 5){
+                this.health_sprite3.setTexture('heart_empty');
+            }
+            else{
+                this.health_sprite3.setTexture('heart_full');
+            }
+            if(this.playerHitPoints == 3){
+                this.health_sprite2.setTexture('heart_half');
+            }
+            else if(this.playerHitPoints < 3){
+                this.health_sprite2.setTexture('heart_empty');
+            }
+            else{
+                this.health_sprite2.setTexture('heart_full');
+            }
+            if(this.playerHitPoints == 1){
+                this.health_sprite.setTexture('heart_half');
+            }
+            else if(this.playerHitPoints < 1){
+                this.health_sprite.setTexture('heart_empty');
+            }
+            else{
+                this.health_sprite.setTexture('heart_full');
+            }
+        }
     private resetGame(): void {
         this.scene.start('MainMenu');
         this.playerHitPoints = this.PLAYER_MAX_HIT_POINTS;
@@ -2076,6 +2102,7 @@ export class Game extends Scene {
         this.bomb_count = 0;
         this.camera_count = 0;
         this.gameTimer = 0;
+        this.music.stop();
     }
 
     private spawnGoblins(): void {
@@ -2132,6 +2159,13 @@ export class Game extends Scene {
     private updateGoblins(time: number): void {
         // Skip if no goblins
         if (this.max_goblins == 0) {
+            return;
+        }
+        else if(this.dialog_active || this.isTransitioning){
+            this.goblin_group.getChildren().forEach((goblin) => {
+                goblin.active = false;
+                (goblin as Phaser.Physics.Arcade.Sprite).setVelocity(0, 0);
+            });
             return;
         }
         else if(this.goblin_count < this.max_goblins){  
@@ -2192,7 +2226,8 @@ export class Game extends Scene {
                 goblinSprite.setVelocity(normalizedDx * -speed * 2, normalizedDy * -speed * 2);
                 return; // Skip the rest of the logic for this goblin
             } 
-            else {
+
+            if(time % 3 == 0) {
                 goblinSprite.setData('isRunning', false);
             }
 
@@ -2250,6 +2285,13 @@ export class Game extends Scene {
     private updateGhosts(time: number): void {
         // Skip if no ghosts
         if (this.max_ghosts == 0) {
+            return;
+        }
+        else if(this.dialog_active || this.isTransitioning){
+            this.ghost_group.getChildren().forEach((ghost) => {
+                ghost.active = false;
+                (ghost as Phaser.Physics.Arcade.Sprite).setVelocity(0, 0);
+            });
             return;
         }
         else if(this.ghost_count < this.max_ghosts){
@@ -2488,7 +2530,7 @@ export class Game extends Scene {
     }
 
     private destroyGhost(ghost: Phaser.GameObjects.GameObject, ghostSprite: Phaser.Physics.Arcade.Sprite): void {
-        this.playSound('ghost_death', { volume: 0.7 });
+        this.playSound('ghost_death', { volume: 1 });
         ghost.destroy();
         
         // Check if the ghost is already being destroyed (has an active tween)
@@ -2644,23 +2686,35 @@ export class Game extends Scene {
         this.bombs.clear(true, true);
         this.bomb_positions = [];
 
-        const keysToSpawn = Phaser.Math.Between(
-            this.MIN_KEYS_PER_LEVEL, 
-            this.MAX_KEYS_PER_LEVEL
-        );
+        let keysToSpawn = 0;
 
-        const bombsToSpawn = Phaser.Math.Between(
-            this.MIN_BOMBS_PER_LEVEL, 
-            this.MAX_BOMBS_PER_LEVEL
-        );
+        if(this.currentLevel >= this.key_starting_level){
+            keysToSpawn = Phaser.Math.Between(
+                this.MIN_KEYS_PER_LEVEL, 
+                this.MAX_KEYS_PER_LEVEL
+            );
+        }
 
-        const cameraItemsToSpawn = Phaser.Math.Between(
-            this.MIN_CAMERA_COUNT, 
-            this.MAX_CAMERA_COUNT
-        );
+        let bombsToSpawn = 0;
+
+        if(this.currentLevel >= this.bomb_starting_level){
+            bombsToSpawn = Phaser.Math.Between(
+                this.MIN_BOMBS_PER_LEVEL, 
+                this.MAX_BOMBS_PER_LEVEL
+            );
+        }
+
+        let cameraItemsToSpawn = 0;
+
+        if(this.currentLevel >= this.camera_starting_level){
+            cameraItemsToSpawn = Phaser.Math.Between(
+                this.MIN_CAMERA_COUNT, 
+                this.MAX_CAMERA_COUNT
+            );
+        }
         
         // Determine how many batteries to spawn (between MIN and MAX)
-        const batteriesToSpawn = Phaser.Math.Between(
+        let batteriesToSpawn = Phaser.Math.Between(
             this.MIN_BATTERIES_PER_LEVEL, 
             this.MAX_BATTERIES_PER_LEVEL
         );  
@@ -2676,6 +2730,7 @@ export class Game extends Scene {
 
         if(this.notes.length > this.currentLevel && entranceRoom){
             this.spawnItem(entranceRoom, "Note");
+            shuffledRooms.splice(shuffledRooms.indexOf(entranceRoom), 1);
         }
         
         // Spawn batteries in different rooms
@@ -2713,7 +2768,7 @@ export class Game extends Scene {
 
     private spawnItem(room: Room, itemType: string): void {
         // Find a random position within the room (not too close to edges)
-        const padding = 1; // Cells from the edge
+        const padding = 2; // Cells from the edge
         const x = Phaser.Math.Between(
             room.x + padding, 
             room.x + room.width - padding   
@@ -3407,23 +3462,22 @@ export class Game extends Scene {
     }
 
     /**
-     * Удаляет стену (устанавливает проходимую клетку) в указанной позиции сетки
-     * @param x X-координата в сетке
-     * @param y Y-координата в сетке
-     * @returns true если стена была удалена, false если клетка уже была проходимой
+     * Removes a wall (sets a cell to traversable) at the specified grid position
+     * @param x X-coordinate in the grid
+     * @param y Y-coordinate in the grid
+     * @returns true if the wall was removed, false if the cell was already traversable
      */
     private removeTile(x: number, y: number): boolean {
-        // Проверяем, что координаты в пределах сетки
+        // Check if coordinates are within grid bounds
         if (x < 0 || x >= this.GRID_SIZE || y < 0 || y >= this.GRID_SIZE) {
             return false;
         }
         
-        // Проверяем, есть ли стена в этой клетке
+
         if (!this.grid[y][x]) {
-            return false; // Клетка уже проходимая
+            return false; 
         }
-        
-        // Удаляем стену (устанавливаем проходимую клетку)
+
         this.grid[y][x] = false;
         
         return true;

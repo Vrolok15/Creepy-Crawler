@@ -49,6 +49,10 @@ export class LevelGenerator {
     private grid: boolean[][];
     private rooms: Room[] = [];
     private config: LevelGeneratorConfig;
+    private entranceX: number;
+    private entranceY: number;
+    private exitX: number;
+    private exitY: number;
 
     constructor(config: LevelGeneratorConfig) {
         this.config = config;
@@ -83,6 +87,10 @@ export class LevelGenerator {
 
         // Place entrance and exit
         const { entranceX, entranceY, exitX, exitY } = this.placeEntranceAndExit();
+        this.entranceX = entranceX;
+        this.entranceY = entranceY;
+        this.exitX = exitX;
+        this.exitY = exitY;
 
         return {
             grid: this.grid,
@@ -245,9 +253,9 @@ export class LevelGenerator {
             // Add padding to avoid walls
             const padding = 2;
             const minX = room.x + padding;
-            const maxX = room.x + room.width - padding - 1;
+            const maxX = room.x + room.width - padding;
             const minY = room.y + padding;
-            const maxY = room.y + room.height - padding - 1;
+            const maxY = room.y + room.height - padding;
             
             // Ensure we have a valid area to place in
             if (maxX <= minX || maxY <= minY) {
@@ -352,8 +360,11 @@ export class LevelGenerator {
                 const newY = point.y + dir.y;
 
                 // Exclude border tiles (first and last row/column)
+                // Also exclude entrance and exit tiles
                 if (newX > 0 && newX < this.config.gridSize - 1 &&
-                    newY > 0 && newY < this.config.gridSize - 1) {
+                    newY > 0 && newY < this.config.gridSize - 1 &&
+                    !(newX === this.entranceX && newY === this.entranceY) &&
+                    !(newX === this.exitX && newY === this.exitY)) {
                     neighbors.push({ x: newX, y: newY });
                 }
             }
