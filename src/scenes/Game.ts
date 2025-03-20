@@ -570,7 +570,7 @@ export class Game extends Scene {
             if (connectionsToRemove.has(connectionKey)) {
                 for (const point of path) {
                     // Only add to queue if this tile wasn't part of a room originally
-                    if (!this.roomTiles[point.y][point.x]) {
+                    if (!this.roomTiles[point.y][point.x] && !(point.x === this.exitX && point.y === this.exitY) && !(point.x === this.entranceX && point.y === this.entranceY)) {
                         this.wallsToAdd.push(point);
                     }
                 }
@@ -1219,7 +1219,7 @@ export class Game extends Scene {
         }
         else if(this.GOING_BACK && !this.sister_sprite){
             this.sister_sprite = this.add.sprite(this.player.x, this.player.y, 'sister');
-            this.sister_sprite.setDepth(1000);
+            this.sister_sprite.setDepth(100);
             this.uiCamera.ignore(this.sister_sprite);
         }
     }
@@ -2392,7 +2392,6 @@ export class Game extends Scene {
     }
 
     private destroyGoblin(goblin: Phaser.GameObjects.GameObject, goblinSprite: Phaser.Physics.Arcade.Sprite): void {
-        this.playSound('goblin_death', { volume: 0.7 });
         goblin.destroy();
         
         // Check if the goblin is already being destroyed (has an active tween)
@@ -2979,9 +2978,7 @@ export class Game extends Scene {
             
             if (distanceToGoblin <= this.bomb_explosion_radius) {
                 this.destroyGoblin(goblin, goblinSprite);
-                
-                // Show score or effect text
-                this.showPlayerEventText('+50', '#00ff00');
+                this.playSound('goblin_death', { volume: 0.7 });
             }
         });
         
