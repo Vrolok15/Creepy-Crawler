@@ -15,7 +15,7 @@ interface Point {
 
 export class Game extends Scene {
     private grid: boolean[][] = [];
-    private readonly GRID_SIZE = 30;
+    private readonly GRID_SIZE = 40;
     private readonly CELL_SIZE = 32;
     private player!: Phaser.Types.Physics.Arcade.SpriteWithDynamicBody;
     private playerSprite!: Phaser.GameObjects.Sprite;
@@ -1486,6 +1486,9 @@ export class Game extends Scene {
 
     update(time: number, delta: number) {
 
+        this.updateGhosts(time);
+        this.updateGoblins(time);
+
         // Skip update if dialog is open
         if (this.isDialogOpen) return;
         this.updatePlayerHealthUI();
@@ -1574,9 +1577,6 @@ export class Game extends Scene {
         );
         this.lightingMask.closePath();
         this.lightingMask.fill();
-
-        this.updateGhosts(time);
-        this.updateGoblins(time);
 
         // Update player grid marker position
         const playerGridX = Math.floor(this.player.x / this.CELL_SIZE);
@@ -2170,8 +2170,9 @@ export class Game extends Scene {
         }
         else if(this.isDialogOpen || this.isTransitioning){
             this.goblin_group.getChildren().forEach((goblin) => {
-                goblin.active = false;
-                (goblin as Phaser.Physics.Arcade.Sprite).setVelocity(0, 0);
+                const goblinSprite = goblin as Phaser.Physics.Arcade.Sprite;
+                goblinSprite.setVelocity(0, 0);
+                goblinSprite.setData('isRunning', false);
             });
             return;
         }
@@ -2298,6 +2299,7 @@ export class Game extends Scene {
             this.ghost_group.getChildren().forEach((ghost) => {
                 const ghostSprite = ghost as Phaser.Physics.Arcade.Sprite;
                 ghostSprite.setVelocity(0, 0);
+                ghostSprite.setData('isFollowing', false);
             });
             return;
         }
